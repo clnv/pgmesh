@@ -33,7 +33,8 @@ views over those methods:
 At runtime, a `Mesh` maps a logical key through a virtual shard to a physical
 `ReplicaSet`. Reads use replica readers by default. Writes and explicit strong
 reads use the primary writer. Configured write mirrors run synchronously after
-the primary succeeds.
+the primary succeeds. Their main purpose is to dual-write from an old physical
+shard to a future shard during a staged expansion or replacement.
 
 This division keeps SQL ownership in sqlc, endpoint capabilities in generated
 Go types, and deployment topology in application configuration.
@@ -57,6 +58,20 @@ used by application keys from the current database layout.
 Changing a virtual-shard mapping is still an operational data-movement event.
 pgmesh validates and applies the mapping; it does not copy rows or coordinate a
 cutover.
+
+## Why synchronous write mirrors
+
+Adding physical shards usually needs an overlap period: the old database still
+serves traffic while the new database is backfilled and verified. A write
+mirror lets generated writes commit to the old primary first and then replay to
+the future shard. After reconciliation, the application switches the
+virtual-shard mapping and makes the new database authoritative.
+
+This is intentionally a migration primitive rather than permanent replication.
+The two writes are ordered but not atomic, historical rows still require a
+backfill, and transaction-bound or batch write paths require a separate replay
+mechanism. See [Expand shards with synchronous dual writes](how-to/add-write-mirrors.md)
+for the complete cutover sequence and its safety checks.
 
 ## Why the application owns shard resolution
 

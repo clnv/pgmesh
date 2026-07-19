@@ -78,5 +78,11 @@ the primary. It takes precedence over normal replica selection.
 - Transaction-bound generated wrappers do not fan writes out to mirrors.
 - Always commit or roll back using normal pgx transaction handling.
 
+The mirror exception is critical during physical-shard expansion: transactional
+writes will not reach the future database through pgmesh. Capture and replay
+them with an outbox, CDC, or another migration mechanism, and reconcile them
+before cutover. See
+[Expand shards with synchronous dual writes](add-write-mirrors.md).
+
 The full runnable pattern is in
 [`examples/04-mirrors-and-transactions`](../../examples/04-mirrors-and-transactions).

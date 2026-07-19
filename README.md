@@ -9,14 +9,16 @@
 `pgmesh` is a standalone sqlc companion for PostgreSQL and pgx/v5. Its Go
 package is also named `pgmesh`. A process plugin generates read/write-separated
 query wrappers, while the runtime routes those wrappers across virtual shards,
-primary databases, read replicas, and synchronous write mirrors.
+primary databases, read replicas, and synchronous dual-write mirrors for staged
+shard expansion.
 
 ## Documentation
 
 - [Purpose and rationale](docs/purpose-and-rationale.md)
 - [Quickstart](docs/quickstart.md)
 - [How-to guides](docs/how-to/README.md) for adding queries, sharding, replicas,
-  mirrors, transactions, generation layouts, and troubleshooting
+  shard-expansion dual writes, transactions, generation layouts, and
+  troubleshooting
 - [Runnable examples](examples)
 
 ## Installation
@@ -251,10 +253,16 @@ user, err = queries.GetUser(ctx, arg, db.WithTx(tx))
 Writes always execute against the selected primary. A transaction-bound
 wrapper deliberately drops mirrors, avoiding cross-database transactions.
 
-## Write mirrors
+## Write mirrors for shard expansion
 
-`VShardMapping.MirrorReplicaSets` configures synchronous dual writes. Generated
-write wrappers:
+`VShardMapping.MirrorReplicaSets` is primarily a staged resharding mechanism.
+Keep the old database as `MainReplicaSet`, add the future database as a mirror,
+and dual-write live changes while historical rows are backfilled and verified.
+After reconciliation, switch `MainReplicaSet` to the new database. The old
+database can temporarily become the new database's mirror to preserve a
+rollback window.
+
+Generated mirrored write wrappers:
 
 1. Execute the primary and return immediately on primary failure.
 2. Execute mirrors sequentially after primary success.
@@ -262,9 +270,17 @@ write wrappers:
 4. Ignore `sql.ErrNoRows` from mirrors, useful for idempotent migrations.
 5. Return the first other mirror error by default.
 
-Set `ignore_mirror_error: true` in plugin options to execute mirrors but discard
-their errors. Batch result objects from `:batch*` are passed through and are not
-mirrored; `:copyfrom` writes are mirrored normally.
+The old and new writes are ordered but not atomic: mirror failure does not roll
+back a successful primary write. pgmesh also does not backfill or reconcile
+data. Transaction-bound calls, `:batch*` result objects, direct pgx writes, and
+older application versions bypass mirror fan-out; `:copyfrom` writes are
+mirrored normally. Cover those paths with an outbox, CDC, or explicit replay
+before cutover.
+
+Avoid `ignore_mirror_error: true` during migration unless another durable
+repair path captures failures. Follow the full
+[old-to-new cutover guide](docs/how-to/add-write-mirrors.md) before switching
+traffic.
 
 ## Development and verification
 

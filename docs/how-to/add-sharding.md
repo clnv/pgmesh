@@ -80,6 +80,10 @@ are rejected when the mesh is created.
 Changing this mapping tells pgmesh where requests should go; it does not move
 existing rows. Move or copy data before switching production traffic.
 
+For an online physical-shard expansion, use
+[synchronous dual writes](add-write-mirrors.md) to keep the old database active
+while the new database is backfilled and verified, then change the mapping.
+
 ## 5. Create nodes and the mesh
 
 The node factory owns connection construction. Retain the pools so the

@@ -165,11 +165,12 @@ func main() {
 
 At this stage there is no runtime topology: both methods use the same pool.
 The generated wrapper still establishes the query classification needed for
-replicas, mirrors, or sharding later.
+replicas, sharding, or staged shard-expansion dual writes later.
 
 ## Next steps
 
 - [Add a query](how-to/add-a-query.md)
 - [Add read replicas](how-to/add-read-replicas.md)
 - [Add sharding](how-to/add-sharding.md)
+- [Expand shards with synchronous dual writes](how-to/add-write-mirrors.md)
 - Explore the [runnable examples](../examples)

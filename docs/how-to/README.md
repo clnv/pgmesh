@@ -12,7 +12,7 @@ working package. If not, begin with the [quickstart](../quickstart.md).
 
 - [Add sharding](add-sharding.md)
 - [Add read replicas](add-read-replicas.md)
-- [Add synchronous write mirrors](add-write-mirrors.md)
+- [Expand shards with synchronous dual writes](add-write-mirrors.md)
 - [Use transactions](use-transactions.md)
 
 ## Diagnose problems

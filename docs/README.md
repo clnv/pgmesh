@@ -16,7 +16,7 @@ The documentation is organized by what you are trying to learn or accomplish.
 - [Add a query](how-to/add-a-query.md)
 - [Add sharding](how-to/add-sharding.md)
 - [Add read replicas](how-to/add-read-replicas.md)
-- [Add synchronous write mirrors](how-to/add-write-mirrors.md)
+- [Expand shards with synchronous dual writes](how-to/add-write-mirrors.md)
 - [Use transactions](how-to/use-transactions.md)
 - [Configure and regenerate code](how-to/configure-generation.md)
 - [Troubleshoot generation and routing](how-to/troubleshoot.md)
@@ -24,8 +24,8 @@ The documentation is organized by what you are trying to learn or accomplish.
 ## Runnable examples
 
 The [`examples`](../examples) directory progresses from a single database to
-read replicas, virtual sharding, mirrors, and transactions. The
-[`integration/fixture`](../integration/fixture) package is the larger generated
+read replicas, virtual sharding, shard-expansion dual writes, and transactions.
+The [`integration/fixture`](../integration/fixture) package is the larger generated
 fixture used by both unit and Docker-backed integration tests.
 
 For the complete annotation and option overview, see the

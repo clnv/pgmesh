@@ -48,7 +48,10 @@ pgmesh does not monitor replication lag.
 A synchronous mirror may have failed after the primary succeeded. Generated
 methods preserve the primary result but return the first non-ignored mirror
 error. Treat retries as potentially duplicating the primary operation and make
-mirrored writes idempotent where possible.
+mirrored writes idempotent where possible. Do not switch a virtual-shard mapping
+to the new database until the failure has been repaired and the databases have
+been reconciled; follow the
+[shard-expansion cutover guide](add-write-mirrors.md).
 
 ## A transaction reaches the wrong database
 
