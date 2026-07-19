@@ -625,6 +625,19 @@ func writeShardedQueryMethod(out *bytes.Buffer, opts *Options, query *generatedQ
 		params,
 		resultsSignature(query.results),
 	)
+	queryKind := "pgmesh.QueryKindRead"
+	if query.kind == queryKindWrite {
+		queryKind = "pgmesh.QueryKindWrite"
+	}
+	fmt.Fprintf(
+		out,
+		"\tctx, queryTrace := %s.mesh.StartQueryTrace(ctx, %q, %s)\n",
+		opts.ReceiverName,
+		query.methodName,
+		queryKind,
+	)
+	out.WriteString("\tvar queryErr error\n")
+	out.WriteString("\tdefer func() { queryTrace.End(queryErr) }()\n")
 	routeArgs := make([]string, 0, len(query.route.operands))
 	for _, operand := range query.route.operands {
 		routeArgs = append(routeArgs, operand.expression)
@@ -638,26 +651,87 @@ func writeShardedQueryMethod(out *bytes.Buffer, opts *Options, query *generatedQ
 	)
 	fmt.Fprintf(out, "\tshard, err := %s.mesh.Shard(shardKey)\n", opts.ReceiverName)
 	out.WriteString("\tif err != nil {\n")
+	out.WriteString("\t\tqueryErr = err\n")
 	writeGeneratedErrorReturn(out, query.results, "err", "\t\t")
 	out.WriteString("\t}\n")
 	out.WriteString("\toptions := applyRouteOptions(routeOptions...)\n")
 	args := callArguments(query.params)
 	if query.kind == queryKindRead {
 		out.WriteString("\tif options.tx != nil {\n")
-		fmt.Fprintf(out, "\t\treturn shard.Write().WithTx(options.tx).%s(%s)\n", query.methodName, args)
+		out.WriteString("\t\tqueryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)\n")
+		writeTracedQueryCall(
+			out,
+			query,
+			fmt.Sprintf("shard.Write().WithTx(options.tx).%s(%s)", query.methodName, args),
+			"\t\t",
+		)
 		out.WriteString("\t}\n")
 		out.WriteString("\tif options.primary {\n")
-		fmt.Fprintf(out, "\t\treturn shard.Write().%s(%s)\n", query.methodName, args)
+		out.WriteString("\t\tqueryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)\n")
+		writeTracedQueryCall(
+			out,
+			query,
+			fmt.Sprintf("shard.Write().%s(%s)", query.methodName, args),
+			"\t\t",
+		)
 		out.WriteString("\t}\n")
-		fmt.Fprintf(out, "\treturn shard.Read().%s(%s)\n", query.methodName, args)
+		out.WriteString("\tqueryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)\n")
+		writeTracedQueryCall(
+			out,
+			query,
+			fmt.Sprintf("shard.Read().%s(%s)", query.methodName, args),
+			"\t",
+		)
 	} else {
 		out.WriteString("\ttarget := shard.Write()\n")
+		out.WriteString("\tmode := pgmesh.RouteModePrimary\n")
+		out.WriteString("\twriteMirrorCount := shard.WriteMirrorCount()\n")
 		out.WriteString("\tif options.tx != nil {\n")
 		out.WriteString("\t\ttarget = target.WithTx(options.tx)\n")
+		out.WriteString("\t\tmode = pgmesh.RouteModeTransaction\n")
+		out.WriteString("\t\twriteMirrorCount = 0\n")
 		out.WriteString("\t}\n")
-		fmt.Fprintf(out, "\treturn target.%s(%s)\n", query.methodName, args)
+		out.WriteString("\tqueryTrace.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)\n")
+		writeTracedQueryCall(
+			out,
+			query,
+			fmt.Sprintf("target.%s(%s)", query.methodName, args),
+			"\t",
+		)
 	}
 	out.WriteString("}\n\n")
+}
+
+func writeTracedQueryCall(
+	out *bytes.Buffer,
+	query *generatedQuery,
+	call string,
+	indent string,
+) {
+	if !lastResultIsError(query.results) {
+		fmt.Fprintf(out, "%sreturn %s\n", indent, call)
+		return
+	}
+
+	nonErrorResults := query.results[:len(query.results)-1]
+	if len(nonErrorResults) == 0 {
+		fmt.Fprintf(out, "%squeryErr = %s\n", indent, call)
+		out.WriteString(indent + "return queryErr\n")
+		return
+	}
+
+	resultVars := resultVariables(len(nonErrorResults))
+	for index, result := range nonErrorResults {
+		fmt.Fprintf(out, "%svar %s %s\n", indent, resultVars[index], result)
+	}
+	fmt.Fprintf(
+		out,
+		"%s%s, queryErr = %s\n",
+		indent,
+		strings.Join(resultVars, ", "),
+		call,
+	)
+	fmt.Fprintf(out, "%sreturn %s, queryErr\n", indent, strings.Join(resultVars, ", "))
 }
 
 func writeGeneratedErrorReturn(out *bytes.Buffer, results []string, errExpression, indent string) {

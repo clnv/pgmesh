@@ -18,6 +18,7 @@ working package. If not, begin with the [quickstart](../quickstart.md).
 ## Diagnose problems
 
 - [Troubleshoot generation and routing](troubleshoot.md)
+- [Enable OpenTelemetry tracing and metrics](enable-opentelemetry.md)
 
 For the reasons behind these boundaries, read
 [Purpose and rationale](../purpose-and-rationale.md).

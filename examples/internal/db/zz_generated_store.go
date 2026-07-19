@@ -223,48 +223,83 @@ func NewShardedQueries[SK any](mesh *pgmesh.Mesh[*ReadQueries, *StoreQueries, SK
 }
 
 func (q *ShardedQueries[SK]) GetAccount(ctx context.Context, arg *GetAccountParams, routeOptions ...RouteOption) (*Account, error) {
+	ctx, queryTrace := q.mesh.StartQueryTrace(ctx, "GetAccount", pgmesh.QueryKindRead)
+	var queryErr error
+	defer func() { queryTrace.End(queryErr) }()
 	shardKey := q.resolver.Tenant(arg.TenantID)
 	shard, err := q.mesh.Shard(shardKey)
 	if err != nil {
+		queryErr = err
 		var zero0 *Account
 		return zero0, err
 	}
 	options := applyRouteOptions(routeOptions...)
 	if options.tx != nil {
-		return shard.Write().WithTx(options.tx).GetAccount(ctx, arg)
+		queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		var rv0 *Account
+		rv0, queryErr = shard.Write().WithTx(options.tx).GetAccount(ctx, arg)
+		return rv0, queryErr
 	}
 	if options.primary {
-		return shard.Write().GetAccount(ctx, arg)
+		queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		var rv0 *Account
+		rv0, queryErr = shard.Write().GetAccount(ctx, arg)
+		return rv0, queryErr
 	}
-	return shard.Read().GetAccount(ctx, arg)
+	queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	var rv0 *Account
+	rv0, queryErr = shard.Read().GetAccount(ctx, arg)
+	return rv0, queryErr
 }
 
 func (q *ShardedQueries[SK]) UpdateAccountName(ctx context.Context, arg *UpdateAccountNameParams, routeOptions ...RouteOption) (*Account, error) {
+	ctx, queryTrace := q.mesh.StartQueryTrace(ctx, "UpdateAccountName", pgmesh.QueryKindWrite)
+	var queryErr error
+	defer func() { queryTrace.End(queryErr) }()
 	shardKey := q.resolver.Tenant(arg.TenantID)
 	shard, err := q.mesh.Shard(shardKey)
 	if err != nil {
+		queryErr = err
 		var zero0 *Account
 		return zero0, err
 	}
 	options := applyRouteOptions(routeOptions...)
 	target := shard.Write()
+	mode := pgmesh.RouteModePrimary
+	writeMirrorCount := shard.WriteMirrorCount()
 	if options.tx != nil {
 		target = target.WithTx(options.tx)
+		mode = pgmesh.RouteModeTransaction
+		writeMirrorCount = 0
 	}
-	return target.UpdateAccountName(ctx, arg)
+	queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)
+	var rv0 *Account
+	rv0, queryErr = target.UpdateAccountName(ctx, arg)
+	return rv0, queryErr
 }
 
 func (q *ShardedQueries[SK]) UpsertAccount(ctx context.Context, arg *UpsertAccountParams, routeOptions ...RouteOption) (*Account, error) {
+	ctx, queryTrace := q.mesh.StartQueryTrace(ctx, "UpsertAccount", pgmesh.QueryKindWrite)
+	var queryErr error
+	defer func() { queryTrace.End(queryErr) }()
 	shardKey := q.resolver.Tenant(arg.TenantID)
 	shard, err := q.mesh.Shard(shardKey)
 	if err != nil {
+		queryErr = err
 		var zero0 *Account
 		return zero0, err
 	}
 	options := applyRouteOptions(routeOptions...)
 	target := shard.Write()
+	mode := pgmesh.RouteModePrimary
+	writeMirrorCount := shard.WriteMirrorCount()
 	if options.tx != nil {
 		target = target.WithTx(options.tx)
+		mode = pgmesh.RouteModeTransaction
+		writeMirrorCount = 0
 	}
-	return target.UpsertAccount(ctx, arg)
+	queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)
+	var rv0 *Account
+	rv0, queryErr = target.UpsertAccount(ctx, arg)
+	return rv0, queryErr
 }

@@ -415,10 +415,17 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 		"func ReadFromPrimary() RouteOption",
 		"func WithTx(tx pgx.Tx) RouteOption",
 		"shardKey := q.resolver.P2P(arg.UserID, arg.PeerID)",
-		"return shard.Read().ListP2PMessages(ctx, arg)",
-		"return shard.Write().WithTx(options.tx).ListP2PMessages(ctx, arg)",
+		`q.mesh.StartQueryTrace(ctx, "ListP2PMessages", pgmesh.QueryKindRead)`,
+		`q.mesh.StartQueryTrace(ctx, "CreateP2PMessage", pgmesh.QueryKindWrite)`,
+		"defer func() { queryTrace.End(queryErr) }()",
+		"queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)",
+		"queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)",
+		"rv0, queryErr = shard.Read().ListP2PMessages(ctx, arg)",
+		"rv0, queryErr = shard.Write().WithTx(options.tx).ListP2PMessages(ctx, arg)",
 		"target := shard.Write()",
-		"return target.CreateP2PMessage(ctx, arg)",
+		"writeMirrorCount := shard.WriteMirrorCount()",
+		"queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)",
+		"rv0, queryErr = target.CreateP2PMessage(ctx, arg)",
 	}
 	for _, check := range checks {
 		if !strings.Contains(got, check) {

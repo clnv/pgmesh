@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Connection struct {
@@ -31,8 +34,10 @@ type Options[R any, W Mirrorable[W], SK any] struct {
 	ReplicaSets []ReplicaSetSpec
 	Shards      Shards
 
-	CreateNode  func(context.Context, string) (Node[R, W], error)
-	ShardHasher ShardHasher[SK]
+	CreateNode     func(context.Context, string) (Node[R, W], error)
+	ShardHasher    ShardHasher[SK]
+	TracerProvider trace.TracerProvider
+	MeterProvider  metric.MeterProvider
 }
 
 func VShardRange(from, to uint64) []uint64 {
@@ -84,7 +89,10 @@ func CreateMesh[R any, W Mirrorable[W], SK any](
 		configured[mapping.MainReplicaSet] = main.WithWriteMirrors(mirrors...)
 	}
 
-	builder := NewBuilder[R, W, SK](opts.Shards.NumVShards).WithHasher(opts.ShardHasher)
+	builder := NewBuilder[R, W, SK](opts.Shards.NumVShards).
+		WithHasher(opts.ShardHasher).
+		WithTracerProvider(opts.TracerProvider).
+		WithMeterProvider(opts.MeterProvider)
 	for _, mapping := range opts.Shards.Mappings {
 		for _, vshard := range mapping.VShards {
 			builder.Link(vshard, configured[mapping.MainReplicaSet])

@@ -38,6 +38,11 @@ func (s *ReplicaSet[R, W]) Write() W {
 	return s.primary.Writer().WithMirrors(s.writeMirrors...)
 }
 
+// WriteMirrorCount returns the number of synchronous write mirrors.
+func (s *ReplicaSet[R, W]) WriteMirrorCount() int {
+	return len(s.writeMirrors)
+}
+
 func (s *ReplicaSet[R, W]) primaryWriter() W {
 	return s.primary.Writer()
 }

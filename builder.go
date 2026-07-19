@@ -3,20 +3,42 @@ package pgmesh
 import (
 	"fmt"
 	"strings"
+
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Builder[R any, W Mirrorable[W], SK any] struct {
-	vshards []*ReplicaSet[R, W]
-	hasher  ShardHasher[SK]
-	err     error
+	vshards   []*ReplicaSet[R, W]
+	hasher    ShardHasher[SK]
+	telemetry queryTelemetry
+	err       error
 }
 
 func NewBuilder[R any, W Mirrorable[W], SK any](numVShards uint64) *Builder[R, W, SK] {
+	telemetry, telemetryErr := newQueryTelemetry(nil, nil)
 	return &Builder[R, W, SK]{
-		vshards: make([]*ReplicaSet[R, W], numVShards),
-		hasher:  nil,
-		err:     nil,
+		vshards:   make([]*ReplicaSet[R, W], numVShards),
+		hasher:    nil,
+		telemetry: telemetry,
+		err:       telemetryErr,
 	}
+}
+
+// WithTracerProvider configures the provider used for routed query spans.
+// A nil provider uses the global OpenTelemetry tracer provider.
+func (b *Builder[R, W, SK]) WithTracerProvider(provider trace.TracerProvider) *Builder[R, W, SK] {
+	b.telemetry.setTracerProvider(provider)
+	return b
+}
+
+// WithMeterProvider configures the provider used for routed query metrics.
+// A nil provider uses the global OpenTelemetry meter provider.
+func (b *Builder[R, W, SK]) WithMeterProvider(provider metric.MeterProvider) *Builder[R, W, SK] {
+	if err := b.telemetry.setMeterProvider(provider); err != nil && b.err == nil {
+		b.err = fmt.Errorf("configure OpenTelemetry metrics: %w", err)
+	}
+	return b
 }
 
 func (b *Builder[R, W, SK]) WithHasher(hasher ShardHasher[SK]) *Builder[R, W, SK] {
@@ -79,5 +101,10 @@ func (b *Builder[R, W, SK]) Build() (*Mesh[R, W, SK], error) {
 		}
 	}
 
-	return &Mesh[R, W, SK]{vshards: vshards, physical: physical, hasher: b.hasher}, nil
+	return &Mesh[R, W, SK]{
+		vshards:   vshards,
+		physical:  physical,
+		hasher:    b.hasher,
+		telemetry: b.telemetry,
+	}, nil
 }

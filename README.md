@@ -17,8 +17,8 @@ shard expansion.
 - [Purpose and rationale](docs/purpose-and-rationale.md)
 - [Quickstart](docs/quickstart.md)
 - [How-to guides](docs/how-to/README.md) for adding queries, sharding, replicas,
-  shard-expansion dual writes, transactions, generation layouts, and
-  troubleshooting
+  shard-expansion dual writes, transactions, OpenTelemetry, generation layouts,
+  and troubleshooting
 - [Runnable examples](examples)
 
 ## Installation
@@ -252,6 +252,18 @@ user, err = queries.GetUser(ctx, arg, db.WithTx(tx))
 
 Writes always execute against the selected primary. A transaction-bound
 wrapper deliberately drops mirrors, avoiding cross-database transactions.
+
+## OpenTelemetry
+
+Generated routed queries emit OpenTelemetry spans, operation counts, and
+duration histograms. They use the global providers by default, or explicit
+providers can be supplied through `Options.TracerProvider` and
+`Options.MeterProvider` (or their `Builder` equivalents). The query context is
+propagated to the selected database wrapper, allowing pgx instrumentation to
+create child spans and metric exemplars to link back to traces.
+
+See [Enable OpenTelemetry](docs/how-to/enable-opentelemetry.md) for setup and
+the metric and attribute contract.
 
 ## Write mirrors for shard expansion
 

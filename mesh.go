@@ -22,9 +22,10 @@ func (s *Shard[R, W]) VShardIndex() uint64 {
 // sets. Its topology is immutable after construction and safe for concurrent
 // use.
 type Mesh[R any, W Mirrorable[W], SK any] struct {
-	vshards  []virtualShard[R, W]
-	physical []*Shard[R, W]
-	hasher   ShardHasher[SK]
+	vshards   []virtualShard[R, W]
+	physical  []*Shard[R, W]
+	hasher    ShardHasher[SK]
+	telemetry queryTelemetry
 }
 
 func (m *Mesh[R, W, SK]) Shard(key SK) (*Shard[R, W], error) {

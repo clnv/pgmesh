@@ -9,6 +9,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/clnv/pgmesh"
 )
@@ -104,6 +111,94 @@ func TestReplicaSetRoutesReadsAndWrites(t *testing.T) {
 	assert.Equal(t, "mirror0-write", writer.mirrors[0].name)
 	assert.Equal(t, "mirror1-write", writer.mirrors[1].name)
 	assert.Empty(t, primary.Writer().mirrors, "routing must not mutate the primary node")
+	assert.Equal(t, 2, replicaSet.WriteMirrorCount())
+}
+
+func TestQueryTelemetryRecordsRoutingAndErrors(t *testing.T) {
+	t.Parallel()
+
+	recorder := tracetest.NewSpanRecorder()
+	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { require.NoError(t, tracerProvider.Shutdown(context.Background())) })
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { require.NoError(t, meterProvider.Shutdown(context.Background())) })
+
+	replicaSet := pgmesh.NewReplicaSet("main", node("main"), nil).
+		WithWriteMirrors(node("mirror").Writer())
+	mesh, err := pgmesh.NewBuilder[string, *fakeWriter, uint64](1).
+		WithTracerProvider(tracerProvider).
+		WithMeterProvider(meterProvider).
+		WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).
+		Link(0, replicaSet).
+		Build()
+	require.NoError(t, err)
+
+	ctx, queryTrace := mesh.StartQueryTrace(t.Context(), "CreateUser", pgmesh.QueryKindWrite)
+	assert.True(t, trace.SpanFromContext(ctx).SpanContext().IsValid())
+	queryTrace.SetRoute(0, "main", pgmesh.RouteModePrimary, replicaSet.WriteMirrorCount())
+	queryErr := errors.New("write failed")
+	queryTrace.End(queryErr)
+
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	span := spans[0]
+	assert.Equal(t, "pgmesh.query CreateUser", span.Name())
+	assert.Equal(t, codes.Error, span.Status().Code)
+	assert.Equal(t, queryErr.Error(), span.Status().Description)
+
+	attributes := make(map[attribute.Key]attribute.Value)
+	for _, item := range span.Attributes() {
+		attributes[item.Key] = item.Value
+	}
+	assert.Equal(t, "CreateUser", attributes[pgmesh.AttributeQueryName].AsString())
+	assert.Equal(t, "write", attributes[pgmesh.AttributeQueryKind].AsString())
+	assert.Equal(t, "0", attributes[pgmesh.AttributeVShard].AsString())
+	assert.Equal(t, "main", attributes[pgmesh.AttributeReplicaSet].AsString())
+	assert.Equal(t, "primary", attributes[pgmesh.AttributeRouteMode].AsString())
+	assert.Equal(t, int64(1), attributes[pgmesh.AttributeWriteMirrorCount].AsInt64())
+	require.Len(t, span.Events(), 1)
+	assert.Equal(t, "exception", span.Events()[0].Name)
+
+	var metrics metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &metrics))
+	require.Len(t, metrics.ScopeMetrics, 1)
+	require.Len(t, metrics.ScopeMetrics[0].Metrics, 2)
+	for _, measurement := range metrics.ScopeMetrics[0].Metrics {
+		switch measurement.Name {
+		case pgmesh.MetricQueryCount:
+			data, ok := measurement.Data.(metricdata.Sum[int64])
+			require.True(t, ok)
+			require.Len(t, data.DataPoints, 1)
+			assert.Equal(t, int64(1), data.DataPoints[0].Value)
+			assertMetricAttributes(t, data.DataPoints[0].Attributes.ToSlice())
+		case pgmesh.MetricQueryDuration:
+			data, ok := measurement.Data.(metricdata.Histogram[float64])
+			require.True(t, ok)
+			require.Len(t, data.DataPoints, 1)
+			assert.Equal(t, uint64(1), data.DataPoints[0].Count)
+			assert.GreaterOrEqual(t, data.DataPoints[0].Sum, 0.0)
+			assertMetricAttributes(t, data.DataPoints[0].Attributes.ToSlice())
+		default:
+			t.Fatalf("unexpected metric %q", measurement.Name)
+		}
+	}
+}
+
+func assertMetricAttributes(t *testing.T, items []attribute.KeyValue) {
+	t.Helper()
+
+	attributes := make(map[attribute.Key]attribute.Value)
+	for _, item := range items {
+		attributes[item.Key] = item.Value
+	}
+	assert.Equal(t, "CreateUser", attributes[pgmesh.AttributeQueryName].AsString())
+	assert.Equal(t, "write", attributes[pgmesh.AttributeQueryKind].AsString())
+	assert.True(t, attributes[pgmesh.AttributeQueryError].AsBool())
+	assert.Equal(t, "0", attributes[pgmesh.AttributeVShard].AsString())
+	assert.Equal(t, "main", attributes[pgmesh.AttributeReplicaSet].AsString())
+	assert.Equal(t, "primary", attributes[pgmesh.AttributeRouteMode].AsString())
+	assert.Equal(t, int64(1), attributes[pgmesh.AttributeWriteMirrorCount].AsInt64())
 }
 
 func TestReplicaSetFallsBackToPrimaryReader(t *testing.T) {

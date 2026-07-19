@@ -219,50 +219,87 @@ func NewShardedQueries[SK any](mesh *pgmesh.Mesh[*ReadQueries, *StoreQueries, SK
 }
 
 func (q *ShardedQueries[SK]) CreateUser(ctx context.Context, arg *CreateUserParams, routeOptions ...RouteOption) (*User, error) {
+	ctx, queryTrace := q.mesh.StartQueryTrace(ctx, "CreateUser", pgmesh.QueryKindWrite)
+	var queryErr error
+	defer func() { queryTrace.End(queryErr) }()
 	shardKey := q.resolver.Tenant(arg.TenantID)
 	shard, err := q.mesh.Shard(shardKey)
 	if err != nil {
+		queryErr = err
 		var zero0 *User
 		return zero0, err
 	}
 	options := applyRouteOptions(routeOptions...)
 	target := shard.Write()
+	mode := pgmesh.RouteModePrimary
+	writeMirrorCount := shard.WriteMirrorCount()
 	if options.tx != nil {
 		target = target.WithTx(options.tx)
+		mode = pgmesh.RouteModeTransaction
+		writeMirrorCount = 0
 	}
-	return target.CreateUser(ctx, arg)
+	queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)
+	var rv0 *User
+	rv0, queryErr = target.CreateUser(ctx, arg)
+	return rv0, queryErr
 }
 
 func (q *ShardedQueries[SK]) GetAnalysis(ctx context.Context, arg *GetAnalysisParams, routeOptions ...RouteOption) (*Analysis, error) {
+	ctx, queryTrace := q.mesh.StartQueryTrace(ctx, "GetAnalysis", pgmesh.QueryKindRead)
+	var queryErr error
+	defer func() { queryTrace.End(queryErr) }()
 	shardKey := q.resolver.Tenant(arg.TenantID)
 	shard, err := q.mesh.Shard(shardKey)
 	if err != nil {
+		queryErr = err
 		var zero0 *Analysis
 		return zero0, err
 	}
 	options := applyRouteOptions(routeOptions...)
 	if options.tx != nil {
-		return shard.Write().WithTx(options.tx).GetAnalysis(ctx, arg)
+		queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		var rv0 *Analysis
+		rv0, queryErr = shard.Write().WithTx(options.tx).GetAnalysis(ctx, arg)
+		return rv0, queryErr
 	}
 	if options.primary {
-		return shard.Write().GetAnalysis(ctx, arg)
+		queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		var rv0 *Analysis
+		rv0, queryErr = shard.Write().GetAnalysis(ctx, arg)
+		return rv0, queryErr
 	}
-	return shard.Read().GetAnalysis(ctx, arg)
+	queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	var rv0 *Analysis
+	rv0, queryErr = shard.Read().GetAnalysis(ctx, arg)
+	return rv0, queryErr
 }
 
 func (q *ShardedQueries[SK]) GetUser(ctx context.Context, arg *GetUserParams, routeOptions ...RouteOption) (*User, error) {
+	ctx, queryTrace := q.mesh.StartQueryTrace(ctx, "GetUser", pgmesh.QueryKindRead)
+	var queryErr error
+	defer func() { queryTrace.End(queryErr) }()
 	shardKey := q.resolver.Tenant(arg.TenantID)
 	shard, err := q.mesh.Shard(shardKey)
 	if err != nil {
+		queryErr = err
 		var zero0 *User
 		return zero0, err
 	}
 	options := applyRouteOptions(routeOptions...)
 	if options.tx != nil {
-		return shard.Write().WithTx(options.tx).GetUser(ctx, arg)
+		queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		var rv0 *User
+		rv0, queryErr = shard.Write().WithTx(options.tx).GetUser(ctx, arg)
+		return rv0, queryErr
 	}
 	if options.primary {
-		return shard.Write().GetUser(ctx, arg)
+		queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		var rv0 *User
+		rv0, queryErr = shard.Write().GetUser(ctx, arg)
+		return rv0, queryErr
 	}
-	return shard.Read().GetUser(ctx, arg)
+	queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	var rv0 *User
+	rv0, queryErr = shard.Read().GetUser(ctx, arg)
+	return rv0, queryErr
 }
