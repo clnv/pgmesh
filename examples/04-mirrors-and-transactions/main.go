@@ -183,6 +183,7 @@ func createMesh(
 		ShardHasher:    pgmesh.ModularShardHashFor[uint64](numVShards),
 		TracerProvider: nil,
 		MeterProvider:  nil,
+		Logger:         nil,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create mesh: %w", err)

@@ -3,6 +3,7 @@ package pgmesh
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"go.opentelemetry.io/otel/metric"
@@ -38,6 +39,7 @@ type Options[R any, W Mirrorable[W], SK any] struct {
 	ShardHasher    ShardHasher[SK]
 	TracerProvider trace.TracerProvider
 	MeterProvider  metric.MeterProvider
+	Logger         *slog.Logger
 }
 
 func VShardRange(from, to uint64) []uint64 {
@@ -92,7 +94,8 @@ func CreateMesh[R any, W Mirrorable[W], SK any](
 	builder := NewBuilder[R, W, SK](opts.Shards.NumVShards).
 		WithHasher(opts.ShardHasher).
 		WithTracerProvider(opts.TracerProvider).
-		WithMeterProvider(opts.MeterProvider)
+		WithMeterProvider(opts.MeterProvider).
+		WithLogger(opts.Logger)
 	for _, mapping := range opts.Shards.Mappings {
 		for _, vshard := range mapping.VShards {
 			builder.Link(vshard, configured[mapping.MainReplicaSet])

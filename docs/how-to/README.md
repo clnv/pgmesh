@@ -15,10 +15,14 @@ working package. If not, begin with the [quickstart](../quickstart.md).
 - [Expand shards with synchronous dual writes](add-write-mirrors.md)
 - [Use transactions](use-transactions.md)
 
+## Observe routed queries
+
+- [Enable OpenTelemetry tracing and metrics](enable-opentelemetry.md)
+- [Enable structured debug logging](enable-logging.md)
+
 ## Diagnose problems
 
 - [Troubleshoot generation and routing](troubleshoot.md)
-- [Enable OpenTelemetry tracing and metrics](enable-opentelemetry.md)
 
 For the reasons behind these boundaries, read
 [Purpose and rationale](../purpose-and-rationale.md).

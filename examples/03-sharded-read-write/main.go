@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -149,6 +150,11 @@ func createMesh(
 		ShardHasher:    pgmesh.ModularShardHashFor[uint64](numVShards),
 		TracerProvider: nil,
 		MeterProvider:  nil,
+		Logger: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			AddSource:   false,
+			Level:       slog.LevelDebug,
+			ReplaceAttr: nil,
+		})),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create mesh: %w", err)

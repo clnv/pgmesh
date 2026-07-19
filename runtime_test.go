@@ -1,9 +1,12 @@
 package pgmesh_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 
@@ -123,12 +126,15 @@ func TestQueryTelemetryRecordsRoutingAndErrors(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { require.NoError(t, meterProvider.Shutdown(context.Background())) })
+	var logOutput bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logOutput, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	replicaSet := pgmesh.NewReplicaSet("main", node("main"), nil).
 		WithWriteMirrors(node("mirror").Writer())
 	mesh, err := pgmesh.NewBuilder[string, *fakeWriter, uint64](1).
 		WithTracerProvider(tracerProvider).
 		WithMeterProvider(meterProvider).
+		WithLogger(logger).
 		WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).
 		Link(0, replicaSet).
 		Build()
@@ -183,6 +189,20 @@ func TestQueryTelemetryRecordsRoutingAndErrors(t *testing.T) {
 			t.Fatalf("unexpected metric %q", measurement.Name)
 		}
 	}
+
+	var logRecord map[string]any
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(logOutput.Bytes()), &logRecord))
+	assert.Equal(t, "DEBUG", logRecord["level"])
+	assert.Equal(t, "pgmesh query completed", logRecord["msg"])
+	assert.Equal(t, "CreateUser", logRecord["query_name"])
+	assert.Equal(t, "write", logRecord["query_kind"])
+	assert.Equal(t, true, logRecord["failed"])
+	assert.Equal(t, "0", logRecord["vshard"])
+	assert.Equal(t, "main", logRecord["replica_set"])
+	assert.Equal(t, "primary", logRecord["route_mode"])
+	assert.InDelta(t, 1, logRecord["write_mirror_count"], 0)
+	assert.Equal(t, queryErr.Error(), logRecord["error"])
+	assert.Contains(t, logRecord, "duration")
 }
 
 func assertMetricAttributes(t *testing.T, items []attribute.KeyValue) {

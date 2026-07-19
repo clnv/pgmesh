@@ -17,8 +17,8 @@ shard expansion.
 - [Purpose and rationale](docs/purpose-and-rationale.md)
 - [Quickstart](docs/quickstart.md)
 - [How-to guides](docs/how-to/README.md) for adding queries, sharding, replicas,
-  shard-expansion dual writes, transactions, OpenTelemetry, generation layouts,
-  and troubleshooting
+  shard-expansion dual writes, transactions, OpenTelemetry, structured logging,
+  generation layouts, and troubleshooting
 - [Runnable examples](examples)
 
 ## Installation
@@ -264,6 +264,16 @@ create child spans and metric exemplars to link back to traces.
 
 See [Enable OpenTelemetry](docs/how-to/enable-opentelemetry.md) for setup and
 the metric and attribute contract.
+
+## Structured debug logging
+
+Set `Options.Logger` or call `Builder.WithLogger` to emit one structured slog
+record for each completed routed query. Records use Debug level and include the
+query, selected route, duration, mirror count, and error outcome. A nil logger
+disables logging.
+
+See [Enable structured logging](docs/how-to/enable-logging.md) for configuration
+and the complete record contract.
 
 ## Write mirrors for shard expansion
 

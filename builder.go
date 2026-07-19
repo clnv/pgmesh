@@ -2,6 +2,7 @@ package pgmesh
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"go.opentelemetry.io/otel/metric"
@@ -38,6 +39,13 @@ func (b *Builder[R, W, SK]) WithMeterProvider(provider metric.MeterProvider) *Bu
 	if err := b.telemetry.setMeterProvider(provider); err != nil && b.err == nil {
 		b.err = fmt.Errorf("configure OpenTelemetry metrics: %w", err)
 	}
+	return b
+}
+
+// WithLogger configures optional structured logging for routed queries.
+// Completed queries are logged at Debug level. A nil logger disables logging.
+func (b *Builder[R, W, SK]) WithLogger(logger *slog.Logger) *Builder[R, W, SK] {
+	b.telemetry.logger = logger
 	return b
 }
 

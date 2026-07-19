@@ -2,6 +2,7 @@ package pgmesh
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"time"
 
@@ -54,9 +55,10 @@ type queryTelemetry struct {
 	tracer        trace.Tracer
 	queryCount    metric.Int64Counter
 	queryDuration metric.Float64Histogram
+	logger        *slog.Logger
 }
 
-// QueryTrace tracks the span and metrics for one routed query.
+// QueryTrace tracks telemetry for one routed query.
 type QueryTrace struct {
 	ctx           context.Context
 	span          trace.Span
@@ -64,6 +66,8 @@ type QueryTrace struct {
 	queryDuration metric.Float64Histogram
 	started       time.Time
 	attributes    []attribute.KeyValue
+	logger        *slog.Logger
+	logAttributes []slog.Attr
 }
 
 func newQueryTelemetry(
@@ -141,6 +145,11 @@ func (m *Mesh[R, W, SK]) StartQueryTrace(
 		queryDuration: m.telemetry.queryDuration,
 		started:       time.Now(),
 		attributes:    attributes,
+		logger:        m.telemetry.logger,
+		logAttributes: []slog.Attr{
+			slog.String("query_name", queryName),
+			slog.String("query_kind", string(kind)),
+		},
 	}
 }
 
@@ -160,10 +169,19 @@ func (t *QueryTrace) SetRoute(
 	}
 	t.span.SetAttributes(routeAttributes...)
 	t.attributes = append(t.attributes, routeAttributes...)
+	t.logAttributes = append(
+		t.logAttributes,
+		slog.String("vshard", strconv.FormatUint(vshard, 10)),
+		slog.String("replica_set", replicaSet),
+		slog.String("route_mode", string(mode)),
+		slog.Int("write_mirror_count", writeMirrorCount),
+	)
 }
 
-// End records metrics and err, if any, then ends the routed query span.
+// End records metrics and a debug log, records err if present, then ends the
+// routed query span.
 func (t *QueryTrace) End(err error) {
+	duration := time.Since(t.started)
 	if err != nil {
 		t.span.RecordError(err)
 		t.span.SetStatus(codes.Error, err.Error())
@@ -174,6 +192,17 @@ func (t *QueryTrace) End(err error) {
 	)
 	recordOptions := metric.WithAttributes(metricAttributes...)
 	t.queryCount.Add(t.ctx, 1, recordOptions)
-	t.queryDuration.Record(t.ctx, time.Since(t.started).Seconds(), recordOptions)
+	t.queryDuration.Record(t.ctx, duration.Seconds(), recordOptions)
+	if t.logger != nil && t.logger.Enabled(t.ctx, slog.LevelDebug) {
+		logAttributes := append(
+			append([]slog.Attr(nil), t.logAttributes...),
+			slog.Bool("failed", err != nil),
+			slog.Duration("duration", duration),
+		)
+		if err != nil {
+			logAttributes = append(logAttributes, slog.Any("error", err))
+		}
+		t.logger.LogAttrs(t.ctx, slog.LevelDebug, "pgmesh query completed", logAttributes...)
+	}
 	t.span.End()
 }
