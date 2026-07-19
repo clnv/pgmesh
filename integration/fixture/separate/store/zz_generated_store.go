@@ -11,17 +11,25 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ReadQuerier exposes generated read queries.
 type ReadQuerier interface {
+	// GetAnalysis executes the generated GetAnalysis query.
 	GetAnalysis(ctx context.Context, arg *db.GetAnalysisParams) (*db.Analysis, error)
+	// GetUser executes the generated GetUser query.
 	GetUser(ctx context.Context, arg *db.GetUserParams) (*db.User, error)
+	// ListUsers executes the generated ListUsers query.
 	ListUsers(ctx context.Context) ([]*db.User, error)
 }
 
+// WriteQuerier exposes generated write queries.
 type WriteQuerier interface {
+	// CopyUsers executes the generated CopyUsers query.
 	CopyUsers(ctx context.Context, arg []*db.CopyUsersParams) (int64, error)
+	// CreateUser executes the generated CreateUser query.
 	CreateUser(ctx context.Context, arg *db.CreateUserParams) (*db.User, error)
 }
 
+// StoreQuerier combines the generated read and write query interfaces.
 type StoreQuerier interface {
 	ReadQuerier
 	WriteQuerier
@@ -32,10 +40,12 @@ var _ WriteQuerier = (*WriteQueries)(nil)
 var _ StoreQuerier = (*StoreQueries)(nil)
 var _ db.Querier = (*StoreQueries)(nil)
 
+// ReadQueries exposes read-only generated queries.
 type ReadQueries struct {
 	main *db.Queries
 }
 
+// NewReadQueries creates a read-only query wrapper.
 func NewReadQueries(database db.DBTX) *ReadQueries {
 	return newReadQueries(db.New(database))
 }
@@ -44,10 +54,12 @@ func newReadQueries(q *db.Queries) *ReadQueries {
 	return &ReadQueries{main: q}
 }
 
+// WithTx returns a read wrapper that executes queries through tx.
 func (q *ReadQueries) WithTx(tx pgx.Tx) *ReadQueries {
 	return newReadQueries(q.main.WithTx(tx))
 }
 
+// GetAnalysis executes the generated GetAnalysis query.
 func (q *ReadQueries) GetAnalysis(ctx context.Context, arg *db.GetAnalysisParams) (*db.Analysis, error) {
 	rv0, err := q.main.GetAnalysis(ctx, arg)
 	if err != nil {
@@ -57,6 +69,7 @@ func (q *ReadQueries) GetAnalysis(ctx context.Context, arg *db.GetAnalysisParams
 	return rv0, nil
 }
 
+// GetUser executes the generated GetUser query.
 func (q *ReadQueries) GetUser(ctx context.Context, arg *db.GetUserParams) (*db.User, error) {
 	rv0, err := q.main.GetUser(ctx, arg)
 	if err != nil {
@@ -66,6 +79,7 @@ func (q *ReadQueries) GetUser(ctx context.Context, arg *db.GetUserParams) (*db.U
 	return rv0, nil
 }
 
+// ListUsers executes the generated ListUsers query.
 func (q *ReadQueries) ListUsers(ctx context.Context) ([]*db.User, error) {
 	rv0, err := q.main.ListUsers(ctx)
 	if err != nil {
@@ -75,11 +89,13 @@ func (q *ReadQueries) ListUsers(ctx context.Context) ([]*db.User, error) {
 	return rv0, nil
 }
 
+// WriteQueries exposes primary-capable generated queries.
 type WriteQueries struct {
 	main    *db.Queries
 	mirrors []*db.Queries
 }
 
+// NewWriteQueries creates a primary-capable query wrapper.
 func NewWriteQueries(database db.DBTX) *WriteQueries {
 	return newWriteQueries(db.New(database))
 }
@@ -88,10 +104,12 @@ func newWriteQueries(q *db.Queries, mirrors ...*db.Queries) *WriteQueries {
 	return &WriteQueries{main: q, mirrors: mirrors}
 }
 
+// WithTx returns a write wrapper that executes queries through tx.
 func (q *WriteQueries) WithTx(tx pgx.Tx) *WriteQueries {
 	return newWriteQueries(q.main.WithTx(tx))
 }
 
+// WithMirrors returns a copy that also writes to the supplied mirrors.
 func (q *WriteQueries) WithMirrors(qs ...*WriteQueries) *WriteQueries {
 	var mirrors []*db.Queries
 	mirrors = append(mirrors, q.mirrors...)
@@ -117,6 +135,7 @@ func (q *WriteQueries) mirror(fn func(*db.Queries) error) error {
 	return nil
 }
 
+// CopyUsers executes the generated CopyUsers query.
 func (q *WriteQueries) CopyUsers(ctx context.Context, arg []*db.CopyUsersParams) (int64, error) {
 	rv0, err := q.main.CopyUsers(ctx, arg)
 	if err != nil {
@@ -130,6 +149,7 @@ func (q *WriteQueries) CopyUsers(ctx context.Context, arg []*db.CopyUsersParams)
 	return rv0, mirrorErr
 }
 
+// CreateUser executes the generated CreateUser query.
 func (q *WriteQueries) CreateUser(ctx context.Context, arg *db.CreateUserParams) (*db.User, error) {
 	rv0, err := q.main.CreateUser(ctx, arg)
 	if err != nil {
@@ -143,11 +163,13 @@ func (q *WriteQueries) CreateUser(ctx context.Context, arg *db.CreateUserParams)
 	return rv0, mirrorErr
 }
 
+// StoreQueries combines read-only and primary-capable generated queries.
 type StoreQueries struct {
 	*ReadQueries
 	*WriteQueries
 }
 
+// NewStoreQueries creates a combined query wrapper.
 func NewStoreQueries(database db.DBTX) *StoreQueries {
 	return newStoreQueries(db.New(database))
 }
@@ -159,10 +181,12 @@ func newStoreQueries(q *db.Queries, mirrors ...*db.Queries) *StoreQueries {
 	}
 }
 
+// WithTx returns a store wrapper that executes queries through tx.
 func (q *StoreQueries) WithTx(tx pgx.Tx) *StoreQueries {
 	return newStoreQueries(q.WriteQueries.main.WithTx(tx))
 }
 
+// WithMirrors returns a copy that also writes to the supplied mirrors.
 func (q *StoreQueries) WithMirrors(qs ...*StoreQueries) *StoreQueries {
 	var mirrors []*db.Queries
 	mirrors = append(mirrors, q.WriteQueries.mirrors...)
@@ -176,12 +200,15 @@ func (q *StoreQueries) WithMirrors(qs ...*StoreQueries) *StoreQueries {
 	return newStoreQueries(q.WriteQueries.main, mirrors...)
 }
 
+// NewStoreNode creates a pgmesh node backed by database.
 func NewStoreNode(database db.DBTX) pgmesh.Node[*ReadQueries, *StoreQueries] {
 	queries := db.New(database)
 	return pgmesh.NewNode(newReadQueries(queries), newStoreQueries(queries))
 }
 
+// ShardResolver resolves generated query parameters to shard keys.
 type ShardResolver[SK any] interface {
+	// Tenant resolves the "tenant" shard route.
 	Tenant(tenantID int64) SK
 }
 
@@ -190,12 +217,15 @@ type routeOptions struct {
 	tx      pgx.Tx
 }
 
+// RouteOption customizes routing for one generated query call.
 type RouteOption func(*routeOptions)
 
+// ReadFromPrimary routes a read query to the shard's primary.
 func ReadFromPrimary() RouteOption {
 	return func(options *routeOptions) { options.primary = true }
 }
 
+// WithTx routes a query through tx and suppresses write mirrors.
 func WithTx(tx pgx.Tx) RouteOption {
 	return func(options *routeOptions) { options.tx = tx }
 }
@@ -210,15 +240,18 @@ func applyRouteOptions(options ...RouteOption) routeOptions {
 	return result
 }
 
+// ShardedQueries routes generated queries through a pgmesh mesh.
 type ShardedQueries[SK any] struct {
 	mesh     *pgmesh.Mesh[*ReadQueries, *StoreQueries, SK]
 	resolver ShardResolver[SK]
 }
 
+// NewShardedQueries creates a routed query facade.
 func NewShardedQueries[SK any](mesh *pgmesh.Mesh[*ReadQueries, *StoreQueries, SK], resolver ShardResolver[SK]) *ShardedQueries[SK] {
 	return &ShardedQueries[SK]{mesh: mesh, resolver: resolver}
 }
 
+// CreateUser executes the generated query on its resolved shard.
 func (q *ShardedQueries[SK]) CreateUser(ctx context.Context, arg *db.CreateUserParams, routeOptions ...RouteOption) (*db.User, error) {
 	ctx, queryTrace := q.mesh.StartQueryTrace(ctx, "CreateUser", pgmesh.QueryKindWrite)
 	var queryErr error
@@ -245,6 +278,7 @@ func (q *ShardedQueries[SK]) CreateUser(ctx context.Context, arg *db.CreateUserP
 	return rv0, queryErr
 }
 
+// GetAnalysis executes the generated query on its resolved shard.
 func (q *ShardedQueries[SK]) GetAnalysis(ctx context.Context, arg *db.GetAnalysisParams, routeOptions ...RouteOption) (*db.Analysis, error) {
 	ctx, queryTrace := q.mesh.StartQueryTrace(ctx, "GetAnalysis", pgmesh.QueryKindRead)
 	var queryErr error
@@ -275,6 +309,7 @@ func (q *ShardedQueries[SK]) GetAnalysis(ctx context.Context, arg *db.GetAnalysi
 	return rv0, queryErr
 }
 
+// GetUser executes the generated query on its resolved shard.
 func (q *ShardedQueries[SK]) GetUser(ctx context.Context, arg *db.GetUserParams, routeOptions ...RouteOption) (*db.User, error) {
 	ctx, queryTrace := q.mesh.StartQueryTrace(ctx, "GetUser", pgmesh.QueryKindRead)
 	var queryErr error

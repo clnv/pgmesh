@@ -10,6 +10,8 @@ type ReplicaSet[R any, W Mirrorable[W]] struct {
 	writeMirrors []W
 }
 
+// NewReplicaSet creates a physical replica set. If replicas is empty, reads
+// fall back to the primary node.
 func NewReplicaSet[R any, W Mirrorable[W]](
 	name string,
 	primary Node[R, W],
@@ -26,14 +28,17 @@ func NewReplicaSet[R any, W Mirrorable[W]](
 	}
 }
 
+// Name returns the replica set's topology name.
 func (s *ReplicaSet[R, W]) Name() string {
 	return s.name
 }
 
+// Read returns the next read view selected by round-robin balancing.
 func (s *ReplicaSet[R, W]) Read() R {
 	return s.replicas.Next().Reader()
 }
 
+// Write returns the primary write view configured with synchronous mirrors.
 func (s *ReplicaSet[R, W]) Write() W {
 	return s.primary.Writer().WithMirrors(s.writeMirrors...)
 }
@@ -47,6 +52,7 @@ func (s *ReplicaSet[R, W]) primaryWriter() W {
 	return s.primary.Writer()
 }
 
+// WithWriteMirrors returns a copy with writes appended to its synchronous mirrors.
 func (s *ReplicaSet[R, W]) WithWriteMirrors(writes ...W) *ReplicaSet[R, W] {
 	mirrors := append([]W(nil), s.writeMirrors...)
 	mirrors = append(mirrors, writes...)

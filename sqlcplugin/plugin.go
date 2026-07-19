@@ -49,42 +49,76 @@ const (
 
 // Options are the sqlc plugin options for the store wrapper generator.
 type Options struct {
+	// OutputFileName is the generated Go file name.
 	OutputFileName string `json:"output_file_name"`
-	SourcePackage  string `json:"source_package"`
+	// SourcePackage is the package containing the source query types.
+	SourcePackage string `json:"source_package"`
 
-	PackageName           string `json:"package"`
-	InternalImportPath    string `json:"internal_import_path"`
-	InternalImportAlias   string `json:"internal_import_alias"`
-	InterfaceName         string `json:"interface"`
-	TypeName              string `json:"type"`
-	TargetTypeName        string `json:"target_type"`
-	ConstructorName       string `json:"constructor"`
+	// PackageName is the package clause used in generated code.
+	PackageName string `json:"package"`
+	// InternalImportPath imports sqlc output when wrappers use a separate package.
+	InternalImportPath string `json:"internal_import_path"`
+	// InternalImportAlias overrides the imported sqlc package qualifier.
+	InternalImportAlias string `json:"internal_import_alias"`
+	// InterfaceName is the sqlc-generated interface the store must implement.
+	InterfaceName string `json:"interface"`
+	// TypeName is the combined read-write wrapper type name.
+	TypeName string `json:"type"`
+	// TargetTypeName is the sqlc-generated query type name.
+	TargetTypeName string `json:"target_type"`
+	// ConstructorName is the combined wrapper constructor name.
+	ConstructorName string `json:"constructor"`
+	// TargetConstructorName is the sqlc-generated query constructor name.
 	TargetConstructorName string `json:"target_constructor"`
-	ReceiverName          string `json:"receiver"`
-	SkipWithTx            bool   `json:"skip_with_tx"`
-	IgnoreMirrorError     bool   `json:"ignore_mirror_error"`
-	ReadInterfaceName     string `json:"read_interface"`
-	WriteInterfaceName    string `json:"write_interface"`
-	StoreInterfaceName    string `json:"store_interface"`
-	ReadTypeName          string `json:"read_type"`
-	WriteTypeName         string `json:"write_type"`
-	ReadConstructorName   string `json:"read_constructor"`
-	WriteConstructorName  string `json:"write_constructor"`
-	RuntimeImportPath     string `json:"runtime_import_path"`
-	NodeConstructorName   string `json:"node_constructor"`
+	// ReceiverName is the receiver identifier used by generated methods.
+	ReceiverName string `json:"receiver"`
+	// SkipWithTx requests omission of transaction methods and is currently unsupported.
+	SkipWithTx bool `json:"skip_with_tx"`
+	// IgnoreMirrorError makes generated writes discard non-NoRows mirror errors.
+	IgnoreMirrorError bool `json:"ignore_mirror_error"`
+	// ReadInterfaceName is the generated read-only interface name.
+	ReadInterfaceName string `json:"read_interface"`
+	// WriteInterfaceName is the generated write interface name.
+	WriteInterfaceName string `json:"write_interface"`
+	// StoreInterfaceName is the generated combined query interface name.
+	StoreInterfaceName string `json:"store_interface"`
+	// ReadTypeName is the generated read-only wrapper type name.
+	ReadTypeName string `json:"read_type"`
+	// WriteTypeName is the generated primary-capable wrapper type name.
+	WriteTypeName string `json:"write_type"`
+	// ReadConstructorName is the read-only wrapper constructor name.
+	ReadConstructorName string `json:"read_constructor"`
+	// WriteConstructorName is the primary-capable wrapper constructor name.
+	WriteConstructorName string `json:"write_constructor"`
+	// RuntimeImportPath is the import path for the pgmesh runtime package.
+	RuntimeImportPath string `json:"runtime_import_path"`
+	// NodeConstructorName is the generated database node constructor name.
+	NodeConstructorName string `json:"node_constructor"`
+	// ResolverInterfaceName is the generated shard resolver interface name.
 	ResolverInterfaceName string `json:"resolver_interface"`
-	ShardedTypeName       string `json:"sharded_type"`
-	ShardedConstructor    string `json:"sharded_constructor"`
+	// ShardedTypeName is the generated routed facade type name.
+	ShardedTypeName string `json:"sharded_type"`
+	// ShardedConstructor is the routed facade constructor name.
+	ShardedConstructor string `json:"sharded_constructor"`
 
-	SQLPackage                  string            `json:"sql_package"`
-	QueryParameterLimit         *int32            `json:"query_parameter_limit"`
-	EmitParamsStructPointers    bool              `json:"emit_params_struct_pointers"`
-	EmitResultStructPointers    bool              `json:"emit_result_struct_pointers"`
-	EmitPointersForNullTypes    bool              `json:"emit_pointers_for_null_types"`
-	EmitPointersForNullEnumType *bool             `json:"emit_pointers_for_null_enum_types"`
-	EmitExactTableNames         bool              `json:"emit_exact_table_names"`
-	Rename                      map[string]string `json:"rename"`
-	Overrides                   []override        `json:"overrides"`
+	// SQLPackage selects the sqlc database driver; only pgx/v5 is supported.
+	SQLPackage string `json:"sql_package"`
+	// QueryParameterLimit matches sqlc's threshold for generating parameter structs.
+	QueryParameterLimit *int32 `json:"query_parameter_limit"`
+	// EmitParamsStructPointers matches sqlc's parameter-struct pointer setting.
+	EmitParamsStructPointers bool `json:"emit_params_struct_pointers"`
+	// EmitResultStructPointers matches sqlc's result-struct pointer setting.
+	EmitResultStructPointers bool `json:"emit_result_struct_pointers"`
+	// EmitPointersForNullTypes matches sqlc's nullable-type pointer setting.
+	EmitPointersForNullTypes bool `json:"emit_pointers_for_null_types"`
+	// EmitPointersForNullEnumType overrides pointer emission for nullable enums.
+	EmitPointersForNullEnumType *bool `json:"emit_pointers_for_null_enum_types"`
+	// EmitExactTableNames preserves table names when deriving generated Go types.
+	EmitExactTableNames bool `json:"emit_exact_table_names"`
+	// Rename maps SQL identifiers to generated Go identifiers.
+	Rename map[string]string `json:"rename"`
+	// Overrides applies sqlc-compatible database and column type overrides.
+	Overrides []override `json:"overrides"`
 }
 
 // Generate implements sqlc's CodegenService.Generate hook.
@@ -331,6 +365,7 @@ func generateWrapper(opts *Options, queries []generatedQuery, imports *importSet
 
 	writeSplitInterface(&out, opts.ReadInterfaceName, queries, queryKindRead)
 	writeSplitInterface(&out, opts.WriteInterfaceName, queries, queryKindWrite)
+	fmt.Fprintf(&out, "// %s combines the generated read and write query interfaces.\n", opts.StoreInterfaceName)
 	fmt.Fprintf(&out, "type %s interface {\n", opts.StoreInterfaceName)
 	fmt.Fprintf(&out, "\t%s\n", opts.ReadInterfaceName)
 	fmt.Fprintf(&out, "\t%s\n", opts.WriteInterfaceName)
@@ -357,10 +392,12 @@ func generateWrapper(opts *Options, queries []generatedQuery, imports *importSet
 }
 
 func writeReadQueries(out *bytes.Buffer, opts *Options, queries []generatedQuery) {
+	fmt.Fprintf(out, "// %s exposes read-only generated queries.\n", opts.ReadTypeName)
 	fmt.Fprintf(out, "type %s struct {\n", opts.ReadTypeName)
 	fmt.Fprintf(out, "\tmain *%s\n", targetName(opts, opts.TargetTypeName))
 	out.WriteString("}\n\n")
 
+	fmt.Fprintf(out, "// %s creates a read-only query wrapper.\n", opts.ReadConstructorName)
 	fmt.Fprintf(out, "func %s(database %s) *%s {\n", opts.ReadConstructorName, targetName(opts, "DBTX"), opts.ReadTypeName)
 	fmt.Fprintf(
 		out,
@@ -381,6 +418,7 @@ func writeReadQueries(out *bytes.Buffer, opts *Options, queries []generatedQuery
 	out.WriteString("}\n\n")
 
 	if !opts.SkipWithTx {
+		out.WriteString("// WithTx returns a read wrapper that executes queries through tx.\n")
 		fmt.Fprintf(out, "func (%s *%s) WithTx(tx pgx.Tx) *%s {\n", opts.ReceiverName, opts.ReadTypeName, opts.ReadTypeName)
 		fmt.Fprintf(out, "\treturn %s(%s.main.WithTx(tx))\n", privateConstructorName(opts.ReadConstructorName), opts.ReceiverName)
 		out.WriteString("}\n\n")
@@ -390,11 +428,13 @@ func writeReadQueries(out *bytes.Buffer, opts *Options, queries []generatedQuery
 }
 
 func writeWriteQueries(out *bytes.Buffer, opts *Options, queries []generatedQuery) {
+	fmt.Fprintf(out, "// %s exposes primary-capable generated queries.\n", opts.WriteTypeName)
 	fmt.Fprintf(out, "type %s struct {\n", opts.WriteTypeName)
 	fmt.Fprintf(out, "\tmain *%s\n", targetName(opts, opts.TargetTypeName))
 	fmt.Fprintf(out, "\tmirrors []*%s\n", targetName(opts, opts.TargetTypeName))
 	out.WriteString("}\n\n")
 
+	fmt.Fprintf(out, "// %s creates a primary-capable query wrapper.\n", opts.WriteConstructorName)
 	fmt.Fprintf(out, "func %s(database %s) *%s {\n", opts.WriteConstructorName, targetName(opts, "DBTX"), opts.WriteTypeName)
 	fmt.Fprintf(
 		out,
@@ -416,11 +456,13 @@ func writeWriteQueries(out *bytes.Buffer, opts *Options, queries []generatedQuer
 	out.WriteString("}\n\n")
 
 	if !opts.SkipWithTx {
+		out.WriteString("// WithTx returns a write wrapper that executes queries through tx.\n")
 		fmt.Fprintf(out, "func (%s *%s) WithTx(tx pgx.Tx) *%s {\n", opts.ReceiverName, opts.WriteTypeName, opts.WriteTypeName)
 		fmt.Fprintf(out, "\treturn %s(%s.main.WithTx(tx))\n", privateConstructorName(opts.WriteConstructorName), opts.ReceiverName)
 		out.WriteString("}\n\n")
 	}
 
+	out.WriteString("// WithMirrors returns a copy that also writes to the supplied mirrors.\n")
 	fmt.Fprintf(
 		out,
 		"func (%s *%s) WithMirrors(qs ...*%s) *%s {\n",
@@ -467,11 +509,13 @@ func writeWriteQueries(out *bytes.Buffer, opts *Options, queries []generatedQuer
 }
 
 func writeStoreQueries(out *bytes.Buffer, opts *Options) {
+	fmt.Fprintf(out, "// %s combines read-only and primary-capable generated queries.\n", opts.TypeName)
 	fmt.Fprintf(out, "type %s struct {\n", opts.TypeName)
 	fmt.Fprintf(out, "\t*%s\n", opts.ReadTypeName)
 	fmt.Fprintf(out, "\t*%s\n", opts.WriteTypeName)
 	out.WriteString("}\n\n")
 
+	fmt.Fprintf(out, "// %s creates a combined query wrapper.\n", opts.ConstructorName)
 	fmt.Fprintf(out, "func %s(database %s) *%s {\n", opts.ConstructorName, targetName(opts, "DBTX"), opts.TypeName)
 	fmt.Fprintf(
 		out,
@@ -496,6 +540,7 @@ func writeStoreQueries(out *bytes.Buffer, opts *Options) {
 	out.WriteString("}\n\n")
 
 	if !opts.SkipWithTx {
+		out.WriteString("// WithTx returns a store wrapper that executes queries through tx.\n")
 		fmt.Fprintf(out, "func (%s *%s) WithTx(tx pgx.Tx) *%s {\n", opts.ReceiverName, opts.TypeName, opts.TypeName)
 		fmt.Fprintf(
 			out,
@@ -507,6 +552,7 @@ func writeStoreQueries(out *bytes.Buffer, opts *Options) {
 		out.WriteString("}\n\n")
 	}
 
+	out.WriteString("// WithMirrors returns a copy that also writes to the supplied mirrors.\n")
 	fmt.Fprintf(out, "func (%s *%s) WithMirrors(qs ...*%s) *%s {\n", opts.ReceiverName, opts.TypeName, opts.TypeName, opts.TypeName)
 	fmt.Fprintf(out, "\tvar mirrors []*%s\n", targetName(opts, opts.TargetTypeName))
 	fmt.Fprintf(out, "\tmirrors = append(mirrors, %s.%s.mirrors...)\n", opts.ReceiverName, opts.WriteTypeName)
@@ -528,6 +574,7 @@ func writeStoreQueries(out *bytes.Buffer, opts *Options) {
 }
 
 func writeNodeConstructor(out *bytes.Buffer, opts *Options) {
+	fmt.Fprintf(out, "// %s creates a pgmesh node backed by database.\n", opts.NodeConstructorName)
 	fmt.Fprintf(
 		out,
 		"func %s(database %s) pgmesh.Node[*%s, *%s] {\n",
@@ -552,8 +599,10 @@ func writeShardedQueries(
 	queries []generatedQuery,
 	routes []shardRoute,
 ) {
+	fmt.Fprintf(out, "// %s resolves generated query parameters to shard keys.\n", opts.ResolverInterfaceName)
 	fmt.Fprintf(out, "type %s[SK any] interface {\n", opts.ResolverInterfaceName)
 	for _, route := range routes {
+		fmt.Fprintf(out, "\t// %s resolves the %q shard route.\n", route.methodName, route.name)
 		fmt.Fprintf(out, "\t%s(%s) SK\n", route.methodName, routeOperandsSignature(route.operands))
 	}
 	out.WriteString("}\n\n")
@@ -562,10 +611,13 @@ func writeShardedQueries(
 	out.WriteString("\tprimary bool\n")
 	out.WriteString("\ttx pgx.Tx\n")
 	out.WriteString("}\n\n")
+	out.WriteString("// RouteOption customizes routing for one generated query call.\n")
 	out.WriteString("type RouteOption func(*routeOptions)\n\n")
+	out.WriteString("// ReadFromPrimary routes a read query to the shard's primary.\n")
 	out.WriteString("func ReadFromPrimary() RouteOption {\n")
 	out.WriteString("\treturn func(options *routeOptions) { options.primary = true }\n")
 	out.WriteString("}\n\n")
+	out.WriteString("// WithTx routes a query through tx and suppresses write mirrors.\n")
 	out.WriteString("func WithTx(tx pgx.Tx) RouteOption {\n")
 	out.WriteString("\treturn func(options *routeOptions) { options.tx = tx }\n")
 	out.WriteString("}\n\n")
@@ -577,10 +629,12 @@ func writeShardedQueries(
 	out.WriteString("\treturn result\n")
 	out.WriteString("}\n\n")
 
+	fmt.Fprintf(out, "// %s routes generated queries through a pgmesh mesh.\n", opts.ShardedTypeName)
 	fmt.Fprintf(out, "type %s[SK any] struct {\n", opts.ShardedTypeName)
 	fmt.Fprintf(out, "\tmesh *pgmesh.Mesh[*%s, *%s, SK]\n", opts.ReadTypeName, opts.TypeName)
 	fmt.Fprintf(out, "\tresolver %s[SK]\n", opts.ResolverInterfaceName)
 	out.WriteString("}\n\n")
+	fmt.Fprintf(out, "// %s creates a routed query facade.\n", opts.ShardedConstructor)
 	fmt.Fprintf(
 		out,
 		"func %s[SK any](mesh *pgmesh.Mesh[*%s, *%s, SK], resolver %s[SK]) *%s[SK] {\n",
@@ -616,6 +670,7 @@ func writeShardedQueryMethod(out *bytes.Buffer, opts *Options, query *generatedQ
 		params += ", "
 	}
 	params += "routeOptions ...RouteOption"
+	fmt.Fprintf(out, "// %s executes the generated query on its resolved shard.\n", query.methodName)
 	fmt.Fprintf(
 		out,
 		"func (%s *%s[SK]) %s(%s)%s {\n",
@@ -765,6 +820,7 @@ func writeQueryMethods(
 		if query.kind != kind {
 			continue
 		}
+		fmt.Fprintf(out, "// %s executes the generated %s query.\n", query.methodName, query.methodName)
 		fmt.Fprintf(out, "func (%s *%s) %s(%s)%s {\n",
 			opts.ReceiverName,
 			receiverType,
@@ -919,11 +975,13 @@ func discardVariables(count int) []string {
 }
 
 func writeSplitInterface(out *bytes.Buffer, name string, queries []generatedQuery, kind queryKind) {
+	fmt.Fprintf(out, "// %s exposes generated %s queries.\n", name, kind)
 	fmt.Fprintf(out, "type %s interface {\n", name)
 	for _, query := range queries {
 		if query.kind != kind {
 			continue
 		}
+		fmt.Fprintf(out, "\t// %s executes the generated %s query.\n", query.methodName, query.methodName)
 		fmt.Fprintf(out, "\t%s(%s)%s\n", query.methodName, paramsSignature(query.params), resultsSignature(query.results))
 	}
 	out.WriteString("}\n\n")

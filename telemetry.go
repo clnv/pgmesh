@@ -17,18 +17,27 @@ const instrumentationName = "github.com/clnv/pgmesh"
 
 // OpenTelemetry metric instrument names emitted for routed queries.
 const (
-	MetricQueryCount    = "pgmesh.query.count"
+	// MetricQueryCount is the counter for completed routed queries.
+	MetricQueryCount = "pgmesh.query.count"
+	// MetricQueryDuration is the histogram of routed query durations in seconds.
 	MetricQueryDuration = "pgmesh.query.duration"
 )
 
 // OpenTelemetry attribute keys recorded on routed query telemetry.
 const (
-	AttributeQueryName        = "pgmesh.query.name"
-	AttributeQueryKind        = "pgmesh.query.kind"
-	AttributeQueryError       = "pgmesh.query.error"
-	AttributeVShard           = "pgmesh.route.vshard"
-	AttributeReplicaSet       = "pgmesh.route.replica_set"
-	AttributeRouteMode        = "pgmesh.route.mode"
+	// AttributeQueryName identifies the generated query method.
+	AttributeQueryName = "pgmesh.query.name"
+	// AttributeQueryKind identifies whether a routed query is a read or write.
+	AttributeQueryKind = "pgmesh.query.kind"
+	// AttributeQueryError reports whether a routed query returned an error.
+	AttributeQueryError = "pgmesh.query.error"
+	// AttributeVShard identifies the selected virtual shard.
+	AttributeVShard = "pgmesh.route.vshard"
+	// AttributeReplicaSet identifies the selected physical replica set.
+	AttributeReplicaSet = "pgmesh.route.replica_set"
+	// AttributeRouteMode identifies the database path selected for a query.
+	AttributeRouteMode = "pgmesh.route.mode"
+	// AttributeWriteMirrorCount reports the number of configured write mirrors.
 	AttributeWriteMirrorCount = "pgmesh.route.write_mirror_count"
 )
 
@@ -37,7 +46,9 @@ type QueryKind string
 
 // Query kinds recorded by generated routed query methods.
 const (
-	QueryKindRead  QueryKind = "read"
+	// QueryKindRead identifies a read query.
+	QueryKindRead QueryKind = "read"
+	// QueryKindWrite identifies a write query.
 	QueryKindWrite QueryKind = "write"
 )
 
@@ -46,8 +57,11 @@ type RouteMode string
 
 // Route modes recorded after a query resolves to a shard.
 const (
-	RouteModeRead        RouteMode = "read"
-	RouteModePrimary     RouteMode = "primary"
+	// RouteModeRead indicates a read routed through the replica load balancer.
+	RouteModeRead RouteMode = "read"
+	// RouteModePrimary indicates a read or write routed directly to the primary.
+	RouteModePrimary RouteMode = "primary"
+	// RouteModeTransaction indicates a query executed on an explicit transaction.
 	RouteModeTransaction RouteMode = "transaction"
 )
 

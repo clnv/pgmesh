@@ -108,13 +108,15 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 	got := string(resp.GetFiles()[0].GetContents())
 	if !strings.Contains(
 		got,
-		"type ReadQuerier interface {\n\tListMessagesWithIDs(ctx context.Context, ids []xid.ID) ([]*Message, error)\n}",
+		"type ReadQuerier interface {\n\t// ListMessagesWithIDs executes the generated ListMessagesWithIDs query.\n"+
+			"\tListMessagesWithIDs(ctx context.Context, ids []xid.ID) ([]*Message, error)\n}",
 	) {
 		t.Fatalf("generated output did not put ListMessagesWithIDs in ReadQuerier:\n%s", got)
 	}
 	if !strings.Contains(
 		got,
-		"type WriteQuerier interface {\n\tCreateMessage(ctx context.Context, arg *CreateMessageParams) (*Message, error)\n}",
+		"type WriteQuerier interface {\n\t// CreateMessage executes the generated CreateMessage query.\n"+
+			"\tCreateMessage(ctx context.Context, arg *CreateMessageParams) (*Message, error)\n}",
 	) {
 		t.Fatalf("generated output did not put CreateMessage in WriteQuerier:\n%s", got)
 	}
@@ -410,7 +412,8 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 	got := string(response.GetFiles()[0].GetContents())
 	checks := []string{
 		`func NewStoreNode(database DBTX) pgmesh.Node[*ReadQueries, *StoreQueries]`,
-		"type ShardResolver[SK any] interface {\n\tP2P(userID int64, peerID int64) SK\n}",
+		"type ShardResolver[SK any] interface {\n\t// P2P resolves the \"p2p\" shard route.\n" +
+			"\tP2P(userID int64, peerID int64) SK\n}",
 		"type ShardedQueries[SK any] struct",
 		"func ReadFromPrimary() RouteOption",
 		"func WithTx(tx pgx.Tx) RouteOption",

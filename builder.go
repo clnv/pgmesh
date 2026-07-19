@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// Builder incrementally assembles and validates an immutable Mesh topology.
 type Builder[R any, W Mirrorable[W], SK any] struct {
 	vshards   []*ReplicaSet[R, W]
 	hasher    ShardHasher[SK]
@@ -16,6 +17,7 @@ type Builder[R any, W Mirrorable[W], SK any] struct {
 	err       error
 }
 
+// NewBuilder creates a builder with numVShards unlinked virtual shards.
 func NewBuilder[R any, W Mirrorable[W], SK any](numVShards uint64) *Builder[R, W, SK] {
 	telemetry, telemetryErr := newQueryTelemetry(nil, nil)
 	return &Builder[R, W, SK]{
@@ -49,6 +51,7 @@ func (b *Builder[R, W, SK]) WithLogger(logger *slog.Logger) *Builder[R, W, SK] {
 	return b
 }
 
+// WithHasher configures the mapping from shard keys to virtual shard indexes.
 func (b *Builder[R, W, SK]) WithHasher(hasher ShardHasher[SK]) *Builder[R, W, SK] {
 	b.hasher = hasher
 	return b
@@ -76,6 +79,7 @@ func (b *Builder[R, W, SK]) Link(vshard uint64, rs *ReplicaSet[R, W]) *Builder[R
 	return b
 }
 
+// Build validates the topology and returns an immutable mesh.
 func (b *Builder[R, W, SK]) Build() (*Mesh[R, W, SK], error) {
 	if b.err != nil {
 		return nil, b.err

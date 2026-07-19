@@ -14,6 +14,7 @@ type Shard[R any, W Mirrorable[W]] struct {
 	vshardIndex uint64
 }
 
+// VShardIndex returns the virtual shard index used to select this shard.
 func (s *Shard[R, W]) VShardIndex() uint64 {
 	return s.vshardIndex
 }
@@ -28,6 +29,7 @@ type Mesh[R any, W Mirrorable[W], SK any] struct {
 	telemetry queryTelemetry
 }
 
+// Shard resolves key to its virtual shard and physical replica set.
 func (m *Mesh[R, W, SK]) Shard(key SK) (*Shard[R, W], error) {
 	index := m.hasher.Hash(key)
 	if index >= uint64(len(m.vshards)) {

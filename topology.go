@@ -10,38 +10,60 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// Connection identifies a database node by its connection string.
 type Connection struct {
+	// DSN is the PostgreSQL data source name passed to Options.CreateNode.
 	DSN string
 }
 
+// ReplicaSetSpec describes a primary database and its read replicas.
 type ReplicaSetSpec struct {
-	Name     string
-	Primary  Connection
+	// Name uniquely identifies the replica set within a topology.
+	Name string
+	// Primary is the replica set's writable database node.
+	Primary Connection
+	// Replicas are read-only nodes used for round-robin reads.
 	Replicas []Connection
 }
 
+// Shards describes the virtual-shard topology and its physical mappings.
 type Shards struct {
+	// NumVShards is the total number of virtual shards in the topology.
 	NumVShards uint64
-	Mappings   []VShardMapping
+	// Mappings assign every virtual shard to a physical replica set.
+	Mappings []VShardMapping
 }
 
+// VShardMapping assigns virtual shards to a main replica set and write mirrors.
 type VShardMapping struct {
-	VShards           []uint64
-	MainReplicaSet    string
+	// VShards are the virtual shard indexes covered by this mapping.
+	VShards []uint64
+	// MainReplicaSet names the replica set that serves reads and primary writes.
+	MainReplicaSet string
+	// MirrorReplicaSets name replica sets that synchronously receive writes.
 	MirrorReplicaSets []string
 }
 
+// Options configures declarative mesh construction.
 type Options[R any, W Mirrorable[W], SK any] struct {
+	// ReplicaSets define the physical database nodes in the topology.
 	ReplicaSets []ReplicaSetSpec
-	Shards      Shards
+	// Shards defines virtual shard placement and write mirrors.
+	Shards Shards
 
-	CreateNode     func(context.Context, string) (Node[R, W], error)
-	ShardHasher    ShardHasher[SK]
+	// CreateNode opens the node identified by a DSN.
+	CreateNode func(context.Context, string) (Node[R, W], error)
+	// ShardHasher maps application shard keys to virtual shard indexes.
+	ShardHasher ShardHasher[SK]
+	// TracerProvider records routed query spans; nil uses the global provider.
 	TracerProvider trace.TracerProvider
-	MeterProvider  metric.MeterProvider
-	Logger         *slog.Logger
+	// MeterProvider records routed query metrics; nil uses the global provider.
+	MeterProvider metric.MeterProvider
+	// Logger receives routed query debug logs; nil disables logging.
+	Logger *slog.Logger
 }
 
+// VShardRange returns the half-open virtual shard range [from, to).
 func VShardRange(from, to uint64) []uint64 {
 	if to <= from {
 		return []uint64{}
@@ -53,6 +75,7 @@ func VShardRange(from, to uint64) []uint64 {
 	return out
 }
 
+// CreateMesh validates opts, opens its database nodes, and builds an immutable mesh.
 func CreateMesh[R any, W Mirrorable[W], SK any](
 	ctx context.Context,
 	opts *Options[R, W, SK],
