@@ -1,0 +1,82 @@
+version: "2"
+linters:
+  enable:
+    - asasalint
+    - errorlint
+    - gocritic
+    - gosec
+    - unconvert
+    - reassign
+    - usestdlibvars
+    - perfsprint
+    - modernize
+    - protogetter
+    - durationcheck
+    - copyloopvar
+    - iotamixing
+    - nosprintfhostport
+    - bidichk
+    - spancheck
+    - bodyclose
+    - wastedassign
+    - exptostd
+    - canonicalheader
+    - intrange
+    - makezero
+    - mirror
+    - fatcontext
+    - embeddedstructfieldcheck
+    - nilerr
+    - nilnesserr
+    - misspell
+    - predeclared
+    - musttag
+    - sloglint
+    - nolintlint
+    - paralleltest
+    - nakedret
+    - testifylint
+    - exhaustruct
+    - goconst
+    - clickhouselint
+  settings:
+    goconst:
+      ignore-tests: true
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    govet:
+      disable:
+        - fieldalignment
+      enable-all: true
+    misspell:
+      locale: US
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    testifylint:
+      enable-all: true
+    sloglint:
+      static-msg: true
+      key-naming-case: snake
+      forbidden-keys:
+        - time
+        - level
+        - msg
+        - source
+  exclusions:
+    generated: lax
+    rules:
+      - path: '(.+)_test\.go'
+        linters:
+          - exhaustruct
+formatters:
+  enable:
+    - gofumpt
+    - golines
+  settings:
+    gofumpt:
+      module-path: github.com/clnv/pgmesh
+      extra-rules: true
+    golines:
+      max-len: 140

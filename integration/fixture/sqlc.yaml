@@ -1,0 +1,77 @@
+version: "2"
+plugins:
+  - name: "sqlcstore"
+    process:
+      cmd: "../../bin/sqlc-gen-store"
+
+sql:
+  - engine: "postgresql"
+    schema: "schema.sql"
+    queries: "queries.sql"
+    gen:
+      go:
+        package: "fixture"
+        out: "."
+        sql_package: "pgx/v5"
+        output_db_file_name: "zz_generated_db.go"
+        output_models_file_name: "zz_generated_models.go"
+        output_querier_file_name: "zz_generated_querier.go"
+        emit_interface: true
+        query_parameter_limit: 1
+        emit_params_struct_pointers: true
+        emit_result_struct_pointers: true
+        emit_pointers_for_null_types: true
+        emit_pointers_for_null_enum_types: false
+        rename:
+          summary: "Description"
+    codegen:
+      - plugin: "sqlcstore"
+        out: "."
+        options:
+          package: "fixture"
+          output_file_name: "zz_generated_store.go"
+          type: "StoreQueries"
+          constructor: "NewStoreQueries"
+          sql_package: "pgx/v5"
+          query_parameter_limit: 1
+          emit_params_struct_pointers: true
+          emit_result_struct_pointers: true
+          emit_pointers_for_null_types: true
+          emit_pointers_for_null_enum_types: false
+          rename:
+            summary: "Description"
+
+  - engine: "postgresql"
+    schema: "schema.sql"
+    queries: "queries.sql"
+    gen:
+      go:
+        package: "internal"
+        out: "separate/internal"
+        sql_package: "pgx/v5"
+        emit_interface: true
+        query_parameter_limit: 1
+        emit_params_struct_pointers: true
+        emit_result_struct_pointers: true
+        emit_pointers_for_null_types: true
+        emit_pointers_for_null_enum_types: false
+        rename:
+          summary: "Description"
+    codegen:
+      - plugin: "sqlcstore"
+        out: "separate/store"
+        options:
+          package: "store"
+          output_file_name: "zz_generated_store.go"
+          type: "StoreQueries"
+          constructor: "NewStoreQueries"
+          internal_import_path: "github.com/clnv/pgmesh/integration/fixture/separate/internal"
+          internal_import_alias: "db"
+          sql_package: "pgx/v5"
+          query_parameter_limit: 1
+          emit_params_struct_pointers: true
+          emit_result_struct_pointers: true
+          emit_pointers_for_null_types: true
+          emit_pointers_for_null_enum_types: false
+          rename:
+            summary: "Description"
