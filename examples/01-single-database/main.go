@@ -19,28 +19,53 @@ func main() {
 }
 
 func run(ctx context.Context) error {
+	pool, err := openDatabase(ctx)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	queries := exampledb.NewStoreQueries(pool)
+	account, err := createAccount(ctx, queries)
+	if err != nil {
+		return err
+	}
+	return loadAndPrintAccount(ctx, queries, account)
+}
+
+func openDatabase(ctx context.Context) (*pgxpool.Pool, error) {
 	dsn := os.Getenv("SINGLE_DATABASE_DSN")
 	if dsn == "" {
-		return errors.New("SINGLE_DATABASE_DSN is required")
+		return nil, errors.New("SINGLE_DATABASE_DSN is required")
 	}
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return nil, fmt.Errorf("open database: %w", err)
 	}
-	defer pool.Close()
-	if pingErr := pool.Ping(ctx); pingErr != nil {
-		return fmt.Errorf("ping database: %w", pingErr)
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("ping database: %w", err)
 	}
+	return pool, nil
+}
 
-	queries := exampledb.NewStoreQueries(pool)
+func createAccount(ctx context.Context, queries *exampledb.StoreQueries) (*exampledb.Account, error) {
 	account, err := queries.UpsertAccount(ctx, &exampledb.UpsertAccountParams{
 		ID:          1001,
 		TenantID:    42,
 		DisplayName: "single database",
 	})
 	if err != nil {
-		return fmt.Errorf("upsert account: %w", err)
+		return nil, fmt.Errorf("upsert account: %w", err)
 	}
+	return account, nil
+}
+
+func loadAndPrintAccount(
+	ctx context.Context,
+	queries *exampledb.StoreQueries,
+	account *exampledb.Account,
+) error {
 	loaded, err := queries.GetAccount(ctx, &exampledb.GetAccountParams{
 		TenantID: account.TenantID,
 		ID:       account.ID,
