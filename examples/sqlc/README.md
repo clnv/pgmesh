@@ -4,7 +4,7 @@ This directory is a minimal PostgreSQL/sqlc project showing the annotation
 grammar and process-plugin configuration. From the `pgmesh` module:
 
 ```bash
-GOWORK=off go build -o bin/sqlc-gen-store ./cmd/sqlc-gen-store
+go build -o bin/sqlc-gen-store ./cmd/sqlc-gen-store
 cd examples/sqlc
 sqlc generate --file sqlc.yaml
 ```

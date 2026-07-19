@@ -11,6 +11,14 @@ package is also named `pgmesh`. A process plugin generates read/write-separated
 query wrappers, while the runtime routes those wrappers across virtual shards,
 primary databases, read replicas, and synchronous write mirrors.
 
+## Documentation
+
+- [Purpose and rationale](docs/purpose-and-rationale.md)
+- [Quickstart](docs/quickstart.md)
+- [How-to guides](docs/how-to/README.md) for adding queries, sharding, replicas,
+  mirrors, transactions, generation layouts, and troubleshooting
+- [Runnable examples](examples)
+
 ## Installation
 
 Add the runtime module to an application with:
