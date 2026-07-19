@@ -1,6 +1,10 @@
 # pgmesh
 
-[![CI](https://github.com/clnv/pgmesh/actions/workflows/ci.yml/badge.svg)](https://github.com/clnv/pgmesh/actions/workflows/ci.yml)
+[![Test](https://github.com/clnv/pgmesh/actions/workflows/test.yml/badge.svg)](https://github.com/clnv/pgmesh/actions/workflows/test.yml)
+[![Lint](https://github.com/clnv/pgmesh/actions/workflows/lint.yml/badge.svg)](https://github.com/clnv/pgmesh/actions/workflows/lint.yml)
+[![Generated](https://github.com/clnv/pgmesh/actions/workflows/generated.yml/badge.svg)](https://github.com/clnv/pgmesh/actions/workflows/generated.yml)
+[![Vulnerability](https://github.com/clnv/pgmesh/actions/workflows/vulnerability.yml/badge.svg)](https://github.com/clnv/pgmesh/actions/workflows/vulnerability.yml)
+[![Integration](https://github.com/clnv/pgmesh/actions/workflows/integration.yml/badge.svg)](https://github.com/clnv/pgmesh/actions/workflows/integration.yml)
 
 `pgmesh` is a standalone sqlc companion for PostgreSQL and pgx/v5. Its Go
 package is also named `pgmesh`. A process plugin generates read/write-separated
@@ -280,10 +284,10 @@ part of the module tests. Table-driven unit tests cover topology validation,
 hashing, virtual-shard ranges, annotation parsing, route conflicts, sqlc command
 shapes, and generated option combinations.
 
-GitHub Actions additionally checks formatting and module-file drift, builds
-every package, runs tests with the race detector and coverage, scans known
-vulnerabilities, verifies generated code, and executes the full Docker-backed
-suite. Failed integration jobs retain Docker logs for seven days; unit jobs
+Separate GitHub Actions workflows check formatting and module-file drift, build
+every package, run tests with the race detector and coverage, lint, scan known
+vulnerabilities, verify generated code, and execute the full Docker-backed
+suite. Failed integration runs retain Docker logs for seven days; test runs
 retain the coverage profile for seven days.
 
 ### Local PostgreSQL integration
