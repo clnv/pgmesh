@@ -1,6 +1,6 @@
 version: "2"
 plugins:
-  - name: "sqlcstore"
+  - name: "pgmesh"
     process:
       cmd: "../../bin/sqlc-gen-store"
 
@@ -22,7 +22,7 @@ sql:
         emit_result_struct_pointers: true
         emit_pointers_for_null_types: true
     codegen:
-      - plugin: "sqlcstore"
+      - plugin: "pgmesh"
         out: "../internal/db"
         options:
           package: "exampledb"

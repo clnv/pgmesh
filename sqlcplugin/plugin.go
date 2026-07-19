@@ -315,7 +315,7 @@ func generateWrapper(opts *Options, queries []generatedQuery, imports *importSet
 	if opts.InternalImportPath != "" {
 		imports.addNamed(importAlias(opts.InternalImportAlias), opts.InternalImportPath)
 	}
-	imports.addNamed("sqlcstore", opts.RuntimeImportPath)
+	imports.addNamed("pgmesh", opts.RuntimeImportPath)
 	if !opts.SkipWithTx {
 		imports.add(defaultPGXPackage)
 	}
@@ -530,7 +530,7 @@ func writeStoreQueries(out *bytes.Buffer, opts *Options) {
 func writeNodeConstructor(out *bytes.Buffer, opts *Options) {
 	fmt.Fprintf(
 		out,
-		"func %s(database %s) sqlcstore.Node[*%s, *%s] {\n",
+		"func %s(database %s) pgmesh.Node[*%s, *%s] {\n",
 		opts.NodeConstructorName,
 		targetName(opts, "DBTX"),
 		opts.ReadTypeName,
@@ -539,7 +539,7 @@ func writeNodeConstructor(out *bytes.Buffer, opts *Options) {
 	fmt.Fprintf(out, "\tqueries := %s(database)\n", targetName(opts, opts.TargetConstructorName))
 	fmt.Fprintf(
 		out,
-		"\treturn sqlcstore.NewNode(%s(queries), %s(queries))\n",
+		"\treturn pgmesh.NewNode(%s(queries), %s(queries))\n",
 		privateConstructorName(opts.ReadConstructorName),
 		privateConstructorName(opts.ConstructorName),
 	)
@@ -578,12 +578,12 @@ func writeShardedQueries(
 	out.WriteString("}\n\n")
 
 	fmt.Fprintf(out, "type %s[SK any] struct {\n", opts.ShardedTypeName)
-	fmt.Fprintf(out, "\tmesh *sqlcstore.Mesh[*%s, *%s, SK]\n", opts.ReadTypeName, opts.TypeName)
+	fmt.Fprintf(out, "\tmesh *pgmesh.Mesh[*%s, *%s, SK]\n", opts.ReadTypeName, opts.TypeName)
 	fmt.Fprintf(out, "\tresolver %s[SK]\n", opts.ResolverInterfaceName)
 	out.WriteString("}\n\n")
 	fmt.Fprintf(
 		out,
-		"func %s[SK any](mesh *sqlcstore.Mesh[*%s, *%s, SK], resolver %s[SK]) *%s[SK] {\n",
+		"func %s[SK any](mesh *pgmesh.Mesh[*%s, *%s, SK], resolver %s[SK]) *%s[SK] {\n",
 		opts.ShardedConstructor,
 		opts.ReadTypeName,
 		opts.TypeName,

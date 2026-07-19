@@ -1,4 +1,4 @@
-package sqlcstore_test
+package pgmesh_test
 
 import (
 	"context"
@@ -22,8 +22,8 @@ func (w *fakeWriter) WithMirrors(mirrors ...*fakeWriter) *fakeWriter {
 	return &fakeWriter{name: w.name, mirrors: append(append([]*fakeWriter(nil), w.mirrors...), mirrors...)}
 }
 
-func node(name string) sqlcstore.Node[string, *fakeWriter] {
-	return sqlcstore.NewNode(name+"-read", &fakeWriter{name: name + "-write"})
+func node(name string) pgmesh.Node[string, *fakeWriter] {
+	return pgmesh.NewNode(name+"-read", &fakeWriter{name: name + "-write"})
 }
 
 func TestShardHashers(t *testing.T) {
@@ -31,15 +31,15 @@ func TestShardHashers(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		hasher sqlcstore.ShardHasher[uint64]
+		hasher pgmesh.ShardHasher[uint64]
 		key    uint64
 		want   uint64
 	}{
-		{name: "constant ignores zero key", hasher: sqlcstore.ConstantShardHashFor[uint64](7), key: 0, want: 7},
-		{name: "constant ignores nonzero key", hasher: sqlcstore.ConstantShardHashFor[uint64](7), key: 99, want: 7},
-		{name: "modular zero", hasher: sqlcstore.ModularShardHashFor[uint64](4), key: 0, want: 0},
-		{name: "modular in range", hasher: sqlcstore.ModularShardHashFor[uint64](4), key: 3, want: 3},
-		{name: "modular wraps", hasher: sqlcstore.ModularShardHashFor[uint64](4), key: 9, want: 1},
+		{name: "constant ignores zero key", hasher: pgmesh.ConstantShardHashFor[uint64](7), key: 0, want: 7},
+		{name: "constant ignores nonzero key", hasher: pgmesh.ConstantShardHashFor[uint64](7), key: 99, want: 7},
+		{name: "modular zero", hasher: pgmesh.ModularShardHashFor[uint64](4), key: 0, want: 0},
+		{name: "modular in range", hasher: pgmesh.ModularShardHashFor[uint64](4), key: 3, want: 3},
+		{name: "modular wraps", hasher: pgmesh.ModularShardHashFor[uint64](4), key: 9, want: 1},
 	}
 
 	for _, test := range tests {
@@ -54,8 +54,8 @@ func TestModularShardHashRejectsZeroVirtualShards(t *testing.T) {
 	t.Parallel()
 	require.PanicsWithValue(
 		t,
-		"sqlcstore: numVShards must not be zero",
-		func() { sqlcstore.ModularShardHashFor[uint64](0) },
+		"pgmesh: numVShards must not be zero",
+		func() { pgmesh.ModularShardHashFor[uint64](0) },
 	)
 }
 
@@ -77,7 +77,7 @@ func TestVShardRange(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, test.want, sqlcstore.VShardRange(test.from, test.to))
+			assert.Equal(t, test.want, pgmesh.VShardRange(test.from, test.to))
 		})
 	}
 }
@@ -91,7 +91,7 @@ func TestReplicaSetRoutesReadsAndWrites(t *testing.T) {
 	mirror0 := node("mirror0")
 	mirror1 := node("mirror1")
 
-	replicaSet := sqlcstore.NewReplicaSet("main", primary, []sqlcstore.Node[string, *fakeWriter]{replica0, replica1}).
+	replicaSet := pgmesh.NewReplicaSet("main", primary, []pgmesh.Node[string, *fakeWriter]{replica0, replica1}).
 		WithWriteMirrors(mirror0.Writer(), mirror1.Writer())
 
 	assert.Equal(t, "replica0-read", replicaSet.Read())
@@ -109,17 +109,17 @@ func TestReplicaSetRoutesReadsAndWrites(t *testing.T) {
 func TestReplicaSetFallsBackToPrimaryReader(t *testing.T) {
 	t.Parallel()
 
-	replicaSet := sqlcstore.NewReplicaSet("main", node("primary"), nil)
+	replicaSet := pgmesh.NewReplicaSet("main", node("primary"), nil)
 	assert.Equal(t, "primary-read", replicaSet.Read())
 }
 
 func TestReplicaSetRoundRobinIsConcurrent(t *testing.T) {
 	t.Parallel()
 
-	replicaSet := sqlcstore.NewReplicaSet(
+	replicaSet := pgmesh.NewReplicaSet(
 		"main",
 		node("primary"),
-		[]sqlcstore.Node[string, *fakeWriter]{node("replica0"), node("replica1")},
+		[]pgmesh.Node[string, *fakeWriter]{node("replica0"), node("replica1")},
 	)
 
 	const calls = 1000
@@ -144,10 +144,10 @@ func TestReplicaSetRoundRobinIsConcurrent(t *testing.T) {
 func TestBuilderRoutesAndListsPhysicalShardsDeterministically(t *testing.T) {
 	t.Parallel()
 
-	shardA := sqlcstore.NewReplicaSet("a", node("a"), nil)
-	shardB := sqlcstore.NewReplicaSet("b", node("b"), nil)
-	mesh, err := sqlcstore.NewBuilder[string, *fakeWriter, uint64](4).
-		WithHasher(sqlcstore.ModularShardHashFor[uint64](4)).
+	shardA := pgmesh.NewReplicaSet("a", node("a"), nil)
+	shardB := pgmesh.NewReplicaSet("b", node("b"), nil)
+	mesh, err := pgmesh.NewBuilder[string, *fakeWriter, uint64](4).
+		WithHasher(pgmesh.ModularShardHashFor[uint64](4)).
 		Link(0, shardB).
 		Link(1, shardA).
 		Link(2, shardB).
@@ -171,91 +171,91 @@ func TestBuilderRoutesAndListsPhysicalShardsDeterministically(t *testing.T) {
 func TestMeshRejectsOutOfRangeHasherResult(t *testing.T) {
 	t.Parallel()
 
-	mesh, err := sqlcstore.NewBuilder[string, *fakeWriter, uint64](1).
-		WithHasher(sqlcstore.ConstantShardHashFor[uint64](2)).
-		Link(0, sqlcstore.NewReplicaSet("main", node("main"), nil)).
+	mesh, err := pgmesh.NewBuilder[string, *fakeWriter, uint64](1).
+		WithHasher(pgmesh.ConstantShardHashFor[uint64](2)).
+		Link(0, pgmesh.NewReplicaSet("main", node("main"), nil)).
 		Build()
 	require.NoError(t, err)
 
 	_, err = mesh.Shard(1)
-	assert.ErrorIs(t, err, sqlcstore.ErrVShardOutOfRange)
+	assert.ErrorIs(t, err, pgmesh.ErrVShardOutOfRange)
 }
 
 func TestBuilderValidation(t *testing.T) {
 	t.Parallel()
 
-	replicaSet := sqlcstore.NewReplicaSet("main", node("main"), nil)
+	replicaSet := pgmesh.NewReplicaSet("main", node("main"), nil)
 	tests := []struct {
 		name string
-		make func() (*sqlcstore.Mesh[string, *fakeWriter, uint64], error)
+		make func() (*pgmesh.Mesh[string, *fakeWriter, uint64], error)
 		want error
 	}{
 		{
 			name: "no virtual shards",
-			make: func() (*sqlcstore.Mesh[string, *fakeWriter, uint64], error) {
-				return sqlcstore.NewBuilder[string, *fakeWriter, uint64](0).
-					WithHasher(sqlcstore.ConstantShardHashFor[uint64](0)).Build()
+			make: func() (*pgmesh.Mesh[string, *fakeWriter, uint64], error) {
+				return pgmesh.NewBuilder[string, *fakeWriter, uint64](0).
+					WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).Build()
 			},
-			want: sqlcstore.ErrNoVShards,
+			want: pgmesh.ErrNoVShards,
 		},
 		{
 			name: "no hasher",
-			make: func() (*sqlcstore.Mesh[string, *fakeWriter, uint64], error) {
-				return sqlcstore.NewBuilder[string, *fakeWriter, uint64](1).Link(0, replicaSet).Build()
+			make: func() (*pgmesh.Mesh[string, *fakeWriter, uint64], error) {
+				return pgmesh.NewBuilder[string, *fakeWriter, uint64](1).Link(0, replicaSet).Build()
 			},
-			want: sqlcstore.ErrNoShardHasher,
+			want: pgmesh.ErrNoShardHasher,
 		},
 		{
 			name: "missing virtual shard",
-			make: func() (*sqlcstore.Mesh[string, *fakeWriter, uint64], error) {
-				return sqlcstore.NewBuilder[string, *fakeWriter, uint64](1).
-					WithHasher(sqlcstore.ConstantShardHashFor[uint64](0)).Build()
+			make: func() (*pgmesh.Mesh[string, *fakeWriter, uint64], error) {
+				return pgmesh.NewBuilder[string, *fakeWriter, uint64](1).
+					WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).Build()
 			},
-			want: sqlcstore.ErrMissingVShard,
+			want: pgmesh.ErrMissingVShard,
 		},
 		{
 			name: "duplicate virtual shard",
-			make: func() (*sqlcstore.Mesh[string, *fakeWriter, uint64], error) {
-				return sqlcstore.NewBuilder[string, *fakeWriter, uint64](1).
-					WithHasher(sqlcstore.ConstantShardHashFor[uint64](0)).
+			make: func() (*pgmesh.Mesh[string, *fakeWriter, uint64], error) {
+				return pgmesh.NewBuilder[string, *fakeWriter, uint64](1).
+					WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).
 					Link(0, replicaSet).Link(0, replicaSet).Build()
 			},
-			want: sqlcstore.ErrDuplicateVShard,
+			want: pgmesh.ErrDuplicateVShard,
 		},
 		{
 			name: "link out of range",
-			make: func() (*sqlcstore.Mesh[string, *fakeWriter, uint64], error) {
-				return sqlcstore.NewBuilder[string, *fakeWriter, uint64](1).
-					WithHasher(sqlcstore.ConstantShardHashFor[uint64](0)).Link(1, replicaSet).Build()
+			make: func() (*pgmesh.Mesh[string, *fakeWriter, uint64], error) {
+				return pgmesh.NewBuilder[string, *fakeWriter, uint64](1).
+					WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).Link(1, replicaSet).Build()
 			},
-			want: sqlcstore.ErrVShardOutOfRange,
+			want: pgmesh.ErrVShardOutOfRange,
 		},
 		{
 			name: "empty replica set name",
-			make: func() (*sqlcstore.Mesh[string, *fakeWriter, uint64], error) {
-				return sqlcstore.NewBuilder[string, *fakeWriter, uint64](1).
-					WithHasher(sqlcstore.ConstantShardHashFor[uint64](0)).
-					Link(0, sqlcstore.NewReplicaSet("", node("main"), nil)).Build()
+			make: func() (*pgmesh.Mesh[string, *fakeWriter, uint64], error) {
+				return pgmesh.NewBuilder[string, *fakeWriter, uint64](1).
+					WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).
+					Link(0, pgmesh.NewReplicaSet("", node("main"), nil)).Build()
 			},
-			want: sqlcstore.ErrEmptyReplicaSetName,
+			want: pgmesh.ErrEmptyReplicaSetName,
 		},
 		{
 			name: "nil replica set",
-			make: func() (*sqlcstore.Mesh[string, *fakeWriter, uint64], error) {
-				return sqlcstore.NewBuilder[string, *fakeWriter, uint64](1).
-					WithHasher(sqlcstore.ConstantShardHashFor[uint64](0)).Link(0, nil).Build()
+			make: func() (*pgmesh.Mesh[string, *fakeWriter, uint64], error) {
+				return pgmesh.NewBuilder[string, *fakeWriter, uint64](1).
+					WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).Link(0, nil).Build()
 			},
-			want: sqlcstore.ErrNilReplicaSet,
+			want: pgmesh.ErrNilReplicaSet,
 		},
 		{
 			name: "duplicate physical name",
-			make: func() (*sqlcstore.Mesh[string, *fakeWriter, uint64], error) {
-				return sqlcstore.NewBuilder[string, *fakeWriter, uint64](2).
-					WithHasher(sqlcstore.ConstantShardHashFor[uint64](0)).
-					Link(0, sqlcstore.NewReplicaSet("same", node("a"), nil)).
-					Link(1, sqlcstore.NewReplicaSet("same", node("b"), nil)).Build()
+			make: func() (*pgmesh.Mesh[string, *fakeWriter, uint64], error) {
+				return pgmesh.NewBuilder[string, *fakeWriter, uint64](2).
+					WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).
+					Link(0, pgmesh.NewReplicaSet("same", node("a"), nil)).
+					Link(1, pgmesh.NewReplicaSet("same", node("b"), nil)).Build()
 			},
-			want: sqlcstore.ErrDuplicateReplicaSet,
+			want: pgmesh.ErrDuplicateReplicaSet,
 		},
 	}
 
@@ -272,23 +272,23 @@ func TestCreateMeshBuildsTopologyAndMirrors(t *testing.T) {
 	t.Parallel()
 
 	created := make([]string, 0)
-	mesh, err := sqlcstore.CreateMesh(t.Context(), &sqlcstore.Options[string, *fakeWriter, uint64]{
-		ReplicaSets: []sqlcstore.ReplicaSetSpec{
-			{Name: "a", Primary: sqlcstore.Connection{DSN: "a-primary"}, Replicas: []sqlcstore.Connection{{DSN: "a-replica"}}},
-			{Name: "b", Primary: sqlcstore.Connection{DSN: "b-primary"}},
+	mesh, err := pgmesh.CreateMesh(t.Context(), &pgmesh.Options[string, *fakeWriter, uint64]{
+		ReplicaSets: []pgmesh.ReplicaSetSpec{
+			{Name: "a", Primary: pgmesh.Connection{DSN: "a-primary"}, Replicas: []pgmesh.Connection{{DSN: "a-replica"}}},
+			{Name: "b", Primary: pgmesh.Connection{DSN: "b-primary"}},
 		},
-		Shards: sqlcstore.Shards{
+		Shards: pgmesh.Shards{
 			NumVShards: 2,
-			Mappings: []sqlcstore.VShardMapping{
+			Mappings: []pgmesh.VShardMapping{
 				{VShards: []uint64{0}, MainReplicaSet: "a", MirrorReplicaSets: []string{"b"}},
 				{VShards: []uint64{1}, MainReplicaSet: "b"},
 			},
 		},
-		CreateNode: func(_ context.Context, dsn string) (sqlcstore.Node[string, *fakeWriter], error) {
+		CreateNode: func(_ context.Context, dsn string) (pgmesh.Node[string, *fakeWriter], error) {
 			created = append(created, dsn)
 			return node(dsn), nil
 		},
-		ShardHasher: sqlcstore.ModularShardHashFor[uint64](2),
+		ShardHasher: pgmesh.ModularShardHashFor[uint64](2),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a-primary", "a-replica", "b-primary"}, created)
@@ -303,148 +303,148 @@ func TestCreateMeshBuildsTopologyAndMirrors(t *testing.T) {
 
 func TestCreateMeshValidation(t *testing.T) {
 	t.Parallel()
-	_, err := sqlcstore.CreateMesh[string, *fakeWriter, uint64](t.Context(), nil)
-	require.ErrorIs(t, err, sqlcstore.ErrNoReplicaSets)
+	_, err := pgmesh.CreateMesh[string, *fakeWriter, uint64](t.Context(), nil)
+	require.ErrorIs(t, err, pgmesh.ErrNoReplicaSets)
 
-	valid := func() *sqlcstore.Options[string, *fakeWriter, uint64] {
-		return &sqlcstore.Options[string, *fakeWriter, uint64]{
-			ReplicaSets: []sqlcstore.ReplicaSetSpec{{
+	valid := func() *pgmesh.Options[string, *fakeWriter, uint64] {
+		return &pgmesh.Options[string, *fakeWriter, uint64]{
+			ReplicaSets: []pgmesh.ReplicaSetSpec{{
 				Name:    "main",
-				Primary: sqlcstore.Connection{DSN: "primary"},
+				Primary: pgmesh.Connection{DSN: "primary"},
 			}},
-			Shards: sqlcstore.Shards{
+			Shards: pgmesh.Shards{
 				NumVShards: 1,
-				Mappings:   []sqlcstore.VShardMapping{{VShards: []uint64{0}, MainReplicaSet: "main"}},
+				Mappings:   []pgmesh.VShardMapping{{VShards: []uint64{0}, MainReplicaSet: "main"}},
 			},
-			CreateNode: func(context.Context, string) (sqlcstore.Node[string, *fakeWriter], error) {
+			CreateNode: func(context.Context, string) (pgmesh.Node[string, *fakeWriter], error) {
 				return node("main"), nil
 			},
-			ShardHasher: sqlcstore.ConstantShardHashFor[uint64](0),
+			ShardHasher: pgmesh.ConstantShardHashFor[uint64](0),
 		}
 	}
 
 	tests := []struct {
 		name string
-		edit func(*sqlcstore.Options[string, *fakeWriter, uint64])
+		edit func(*pgmesh.Options[string, *fakeWriter, uint64])
 		want error
 	}{
 		{
 			name: "no replica sets",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) { o.ReplicaSets = nil },
-			want: sqlcstore.ErrNoReplicaSets,
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.ReplicaSets = nil },
+			want: pgmesh.ErrNoReplicaSets,
 		},
 		{
 			name: "empty name",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) { o.ReplicaSets[0].Name = "" },
-			want: sqlcstore.ErrEmptyReplicaSetName,
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.ReplicaSets[0].Name = "" },
+			want: pgmesh.ErrEmptyReplicaSetName,
 		},
 		{
 			name: "whitespace name",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) { o.ReplicaSets[0].Name = " \t" },
-			want: sqlcstore.ErrEmptyReplicaSetName,
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.ReplicaSets[0].Name = " \t" },
+			want: pgmesh.ErrEmptyReplicaSetName,
 		},
-		{name: "duplicate name", edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) {
+		{name: "duplicate name", edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
 			o.ReplicaSets = append(o.ReplicaSets, o.ReplicaSets[0])
-		}, want: sqlcstore.ErrDuplicateReplicaSet},
+		}, want: pgmesh.ErrDuplicateReplicaSet},
 		{
 			name: "empty DSN",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) { o.ReplicaSets[0].Primary.DSN = "" },
-			want: sqlcstore.ErrEmptyDSN,
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.ReplicaSets[0].Primary.DSN = "" },
+			want: pgmesh.ErrEmptyDSN,
 		},
 		{
 			name: "whitespace primary DSN",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) { o.ReplicaSets[0].Primary.DSN = " \t" },
-			want: sqlcstore.ErrEmptyDSN,
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.ReplicaSets[0].Primary.DSN = " \t" },
+			want: pgmesh.ErrEmptyDSN,
 		},
 		{
 			name: "empty replica DSN",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) {
-				o.ReplicaSets[0].Replicas = []sqlcstore.Connection{{DSN: ""}}
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
+				o.ReplicaSets[0].Replicas = []pgmesh.Connection{{DSN: ""}}
 			},
-			want: sqlcstore.ErrEmptyDSN,
+			want: pgmesh.ErrEmptyDSN,
 		},
 		{
 			name: "no factory",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) { o.CreateNode = nil },
-			want: sqlcstore.ErrNoNodeFactory,
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.CreateNode = nil },
+			want: pgmesh.ErrNoNodeFactory,
 		},
 		{
 			name: "no hasher",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) { o.ShardHasher = nil },
-			want: sqlcstore.ErrNoShardHasher,
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.ShardHasher = nil },
+			want: pgmesh.ErrNoShardHasher,
 		},
 		{
 			name: "no virtual shards",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) { o.Shards.NumVShards = 0 },
-			want: sqlcstore.ErrNoVShards,
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.Shards.NumVShards = 0 },
+			want: pgmesh.ErrNoVShards,
 		},
-		{name: "unknown main", edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) {
+		{name: "unknown main", edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
 			o.Shards.Mappings[0].MainReplicaSet = "missing"
-		}, want: sqlcstore.ErrUnknownReplicaSet},
-		{name: "unknown mirror", edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) {
+		}, want: pgmesh.ErrUnknownReplicaSet},
+		{name: "unknown mirror", edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
 			o.Shards.Mappings[0].MirrorReplicaSets = []string{"missing"}
-		}, want: sqlcstore.ErrUnknownReplicaSet},
+		}, want: pgmesh.ErrUnknownReplicaSet},
 		{
 			name: "self mirror",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) {
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
 				o.Shards.Mappings[0].MirrorReplicaSets = []string{"main"}
 			},
-			want: sqlcstore.ErrMirrorConfiguration,
+			want: pgmesh.ErrMirrorConfiguration,
 		},
 		{
 			name: "duplicate mirror",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) {
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
 				o.ReplicaSets = append(
 					o.ReplicaSets,
-					sqlcstore.ReplicaSetSpec{Name: "mirror", Primary: sqlcstore.Connection{DSN: "mirror"}},
+					pgmesh.ReplicaSetSpec{Name: "mirror", Primary: pgmesh.Connection{DSN: "mirror"}},
 				)
 				o.Shards.Mappings[0].MirrorReplicaSets = []string{"mirror", "mirror"}
 			},
-			want: sqlcstore.ErrMirrorConfiguration,
+			want: pgmesh.ErrMirrorConfiguration,
 		},
 		{
 			name: "missing vshard",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) { o.Shards.Mappings = nil },
-			want: sqlcstore.ErrMissingVShard,
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.Shards.Mappings = nil },
+			want: pgmesh.ErrMissingVShard,
 		},
-		{name: "duplicate vshard", edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) {
+		{name: "duplicate vshard", edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
 			o.Shards.Mappings = append(o.Shards.Mappings, o.Shards.Mappings[0])
-		}, want: sqlcstore.ErrDuplicateVShard},
+		}, want: pgmesh.ErrDuplicateVShard},
 		{
 			name: "out of range",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) { o.Shards.Mappings[0].VShards = []uint64{1} },
-			want: sqlcstore.ErrVShardOutOfRange,
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.Shards.Mappings[0].VShards = []uint64{1} },
+			want: pgmesh.ErrVShardOutOfRange,
 		},
 		{
 			name: "inconsistent mirrors",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) {
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
 				o.Shards.NumVShards = 2
 				o.ReplicaSets = append(
 					o.ReplicaSets,
-					sqlcstore.ReplicaSetSpec{Name: "mirror", Primary: sqlcstore.Connection{DSN: "mirror"}},
+					pgmesh.ReplicaSetSpec{Name: "mirror", Primary: pgmesh.Connection{DSN: "mirror"}},
 				)
-				o.Shards.Mappings = []sqlcstore.VShardMapping{
+				o.Shards.Mappings = []pgmesh.VShardMapping{
 					{VShards: []uint64{0}, MainReplicaSet: "main"},
 					{VShards: []uint64{1}, MainReplicaSet: "main", MirrorReplicaSets: []string{"mirror"}},
 				}
 			},
-			want: sqlcstore.ErrMirrorConfiguration,
+			want: pgmesh.ErrMirrorConfiguration,
 		},
 		{
 			name: "inconsistent mirror order",
-			edit: func(o *sqlcstore.Options[string, *fakeWriter, uint64]) {
+			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
 				o.Shards.NumVShards = 2
 				o.ReplicaSets = append(
 					o.ReplicaSets,
-					sqlcstore.ReplicaSetSpec{Name: "mirror-a", Primary: sqlcstore.Connection{DSN: "mirror-a"}},
-					sqlcstore.ReplicaSetSpec{Name: "mirror-b", Primary: sqlcstore.Connection{DSN: "mirror-b"}},
+					pgmesh.ReplicaSetSpec{Name: "mirror-a", Primary: pgmesh.Connection{DSN: "mirror-a"}},
+					pgmesh.ReplicaSetSpec{Name: "mirror-b", Primary: pgmesh.Connection{DSN: "mirror-b"}},
 				)
-				o.Shards.Mappings = []sqlcstore.VShardMapping{
+				o.Shards.Mappings = []pgmesh.VShardMapping{
 					{VShards: []uint64{0}, MainReplicaSet: "main", MirrorReplicaSets: []string{"mirror-a", "mirror-b"}},
 					{VShards: []uint64{1}, MainReplicaSet: "main", MirrorReplicaSets: []string{"mirror-b", "mirror-a"}},
 				}
 			},
-			want: sqlcstore.ErrMirrorConfiguration,
+			want: pgmesh.ErrMirrorConfiguration,
 		},
 	}
 
@@ -453,7 +453,7 @@ func TestCreateMeshValidation(t *testing.T) {
 			t.Parallel()
 			opts := valid()
 			test.edit(opts)
-			_, err := sqlcstore.CreateMesh(t.Context(), opts)
+			_, err := pgmesh.CreateMesh(t.Context(), opts)
 			assert.ErrorIs(t, err, test.want)
 		})
 	}
@@ -463,15 +463,15 @@ func TestCreateMeshWrapsFactoryError(t *testing.T) {
 	t.Parallel()
 
 	sentinel := errors.New("connect failed")
-	_, err := sqlcstore.CreateMesh(t.Context(), &sqlcstore.Options[string, *fakeWriter, uint64]{
-		ReplicaSets: []sqlcstore.ReplicaSetSpec{{Name: "main", Primary: sqlcstore.Connection{DSN: "primary"}}},
-		Shards: sqlcstore.Shards{NumVShards: 1, Mappings: []sqlcstore.VShardMapping{{
+	_, err := pgmesh.CreateMesh(t.Context(), &pgmesh.Options[string, *fakeWriter, uint64]{
+		ReplicaSets: []pgmesh.ReplicaSetSpec{{Name: "main", Primary: pgmesh.Connection{DSN: "primary"}}},
+		Shards: pgmesh.Shards{NumVShards: 1, Mappings: []pgmesh.VShardMapping{{
 			VShards: []uint64{0}, MainReplicaSet: "main",
 		}}},
-		CreateNode: func(context.Context, string) (sqlcstore.Node[string, *fakeWriter], error) {
-			return sqlcstore.Node[string, *fakeWriter]{}, sentinel
+		CreateNode: func(context.Context, string) (pgmesh.Node[string, *fakeWriter], error) {
+			return pgmesh.Node[string, *fakeWriter]{}, sentinel
 		},
-		ShardHasher: sqlcstore.ConstantShardHashFor[uint64](0),
+		ShardHasher: pgmesh.ConstantShardHashFor[uint64](0),
 	})
 	require.ErrorIs(t, err, sentinel)
 	assert.Contains(t, err.Error(), fmt.Sprintf("primary node for replica set %q", "main"))

@@ -1,6 +1,6 @@
 version: "2"
 plugins:
-  - name: "sqlcstore"
+  - name: "pgmesh"
     process:
       cmd: "../../bin/sqlc-gen-store"
 
@@ -25,7 +25,7 @@ sql:
         rename:
           summary: "Description"
     codegen:
-      - plugin: "sqlcstore"
+      - plugin: "pgmesh"
         out: "."
         options:
           package: "fixture"
@@ -58,7 +58,7 @@ sql:
         rename:
           summary: "Description"
     codegen:
-      - plugin: "sqlcstore"
+      - plugin: "pgmesh"
         out: "separate/store"
         options:
           package: "store"

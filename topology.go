@@ -1,4 +1,4 @@
-package sqlcstore
+package pgmesh
 
 import (
 	"context"

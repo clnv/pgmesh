@@ -44,46 +44,46 @@ func run(ctx context.Context) error {
 		}
 	}()
 
-	mesh, err := sqlcstore.CreateMesh(ctx, &sqlcstore.Options[
+	mesh, err := pgmesh.CreateMesh(ctx, &pgmesh.Options[
 		*exampledb.ReadQueries,
 		*exampledb.StoreQueries,
 		uint64,
 	]{
-		ReplicaSets: []sqlcstore.ReplicaSetSpec{
+		ReplicaSets: []pgmesh.ReplicaSetSpec{
 			{
 				Name:     "shard-0",
-				Primary:  sqlcstore.Connection{DSN: dsns["SHARD0_PRIMARY_DSN"]},
-				Replicas: []sqlcstore.Connection{{DSN: dsns["SHARD0_REPLICA_DSN"]}},
+				Primary:  pgmesh.Connection{DSN: dsns["SHARD0_PRIMARY_DSN"]},
+				Replicas: []pgmesh.Connection{{DSN: dsns["SHARD0_REPLICA_DSN"]}},
 			},
 			{
 				Name:     "shard-1",
-				Primary:  sqlcstore.Connection{DSN: dsns["SHARD1_PRIMARY_DSN"]},
-				Replicas: []sqlcstore.Connection{{DSN: dsns["SHARD1_REPLICA_DSN"]}},
+				Primary:  pgmesh.Connection{DSN: dsns["SHARD1_PRIMARY_DSN"]},
+				Replicas: []pgmesh.Connection{{DSN: dsns["SHARD1_REPLICA_DSN"]}},
 			},
 		},
-		Shards: sqlcstore.Shards{
+		Shards: pgmesh.Shards{
 			NumVShards: 128,
-			Mappings: []sqlcstore.VShardMapping{
-				{VShards: sqlcstore.VShardRange(0, 64), MainReplicaSet: "shard-0", MirrorReplicaSets: nil},
-				{VShards: sqlcstore.VShardRange(64, 128), MainReplicaSet: "shard-1", MirrorReplicaSets: nil},
+			Mappings: []pgmesh.VShardMapping{
+				{VShards: pgmesh.VShardRange(0, 64), MainReplicaSet: "shard-0", MirrorReplicaSets: nil},
+				{VShards: pgmesh.VShardRange(64, 128), MainReplicaSet: "shard-1", MirrorReplicaSets: nil},
 			},
 		},
 		CreateNode: func(ctx context.Context, dsn string) (
-			sqlcstore.Node[*exampledb.ReadQueries, *exampledb.StoreQueries],
+			pgmesh.Node[*exampledb.ReadQueries, *exampledb.StoreQueries],
 			error,
 		) {
 			pool, poolErr := pgxpool.New(ctx, dsn)
 			if poolErr != nil {
-				return sqlcstore.Node[*exampledb.ReadQueries, *exampledb.StoreQueries]{}, poolErr
+				return pgmesh.Node[*exampledb.ReadQueries, *exampledb.StoreQueries]{}, poolErr
 			}
 			if pingErr := pool.Ping(ctx); pingErr != nil {
 				pool.Close()
-				return sqlcstore.Node[*exampledb.ReadQueries, *exampledb.StoreQueries]{}, pingErr
+				return pgmesh.Node[*exampledb.ReadQueries, *exampledb.StoreQueries]{}, pingErr
 			}
 			pools = append(pools, pool)
 			return exampledb.NewStoreNode(pool), nil
 		},
-		ShardHasher: sqlcstore.ModularShardHashFor[uint64](128),
+		ShardHasher: pgmesh.ModularShardHashFor[uint64](128),
 	})
 	if err != nil {
 		return fmt.Errorf("create mesh: %w", err)

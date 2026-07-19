@@ -1,11 +1,11 @@
 x-postgres: &postgres
   image: postgres:18
   environment:
-    POSTGRES_USER: sqlcstore
-    POSTGRES_PASSWORD: sqlcstore
-    POSTGRES_DB: sqlcstore
+    POSTGRES_USER: pgmesh
+    POSTGRES_PASSWORD: pgmesh
+    POSTGRES_DB: pgmesh
   healthcheck:
-    test: ["CMD-SHELL", "pg_isready -U sqlcstore -d sqlcstore"]
+    test: ["CMD-SHELL", "pg_isready -U pgmesh -d pgmesh"]
     interval: 1s
     timeout: 3s
     retries: 60
@@ -15,7 +15,7 @@ services:
   shard0-primary:
     <<: *postgres
     ports:
-      - "${SQLCSTORE_SHARD0_PRIMARY_PORT:-25432}:5432"
+      - "${PGMESH_SHARD0_PRIMARY_PORT:-25432}:5432"
     volumes:
       - ./fixture/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
       - ../examples/sqlc/schema.sql:/docker-entrypoint-initdb.d/002-example-schema.sql:ro
@@ -23,7 +23,7 @@ services:
   shard0-replica0:
     <<: *postgres
     ports:
-      - "${SQLCSTORE_SHARD0_REPLICA0_PORT:-25433}:5432"
+      - "${PGMESH_SHARD0_REPLICA0_PORT:-25433}:5432"
     volumes:
       - ./fixture/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
       - ../examples/sqlc/schema.sql:/docker-entrypoint-initdb.d/002-example-schema.sql:ro
@@ -31,7 +31,7 @@ services:
   shard0-replica1:
     <<: *postgres
     ports:
-      - "${SQLCSTORE_SHARD0_REPLICA1_PORT:-25434}:5432"
+      - "${PGMESH_SHARD0_REPLICA1_PORT:-25434}:5432"
     volumes:
       - ./fixture/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
       - ../examples/sqlc/schema.sql:/docker-entrypoint-initdb.d/002-example-schema.sql:ro
@@ -39,7 +39,7 @@ services:
   shard1-primary:
     <<: *postgres
     ports:
-      - "${SQLCSTORE_SHARD1_PRIMARY_PORT:-25435}:5432"
+      - "${PGMESH_SHARD1_PRIMARY_PORT:-25435}:5432"
     volumes:
       - ./fixture/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
       - ../examples/sqlc/schema.sql:/docker-entrypoint-initdb.d/002-example-schema.sql:ro
@@ -47,7 +47,7 @@ services:
   shard0-mirror:
     <<: *postgres
     ports:
-      - "${SQLCSTORE_SHARD0_MIRROR_PORT:-25436}:5432"
+      - "${PGMESH_SHARD0_MIRROR_PORT:-25436}:5432"
     volumes:
       - ./fixture/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
       - ../examples/sqlc/schema.sql:/docker-entrypoint-initdb.d/002-example-schema.sql:ro

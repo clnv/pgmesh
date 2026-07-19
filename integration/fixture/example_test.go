@@ -12,13 +12,13 @@ func ExampleShardedQueries() {
 	primary := NewStoreNode(&fakeDB{name: "primary", log: log})
 	replica := NewStoreNode(&fakeDB{name: "replica", log: log})
 	mirror := NewStoreNode(&fakeDB{name: "mirror", log: log})
-	replicaSet := sqlcstore.NewReplicaSet(
+	replicaSet := pgmesh.NewReplicaSet(
 		"main",
 		primary,
-		[]sqlcstore.Node[*ReadQueries, *StoreQueries]{replica},
+		[]pgmesh.Node[*ReadQueries, *StoreQueries]{replica},
 	).WithWriteMirrors(mirror.Writer())
-	mesh, err := sqlcstore.NewBuilder[*ReadQueries, *StoreQueries, uint64](1).
-		WithHasher(sqlcstore.ConstantShardHashFor[uint64](0)).
+	mesh, err := pgmesh.NewBuilder[*ReadQueries, *StoreQueries, uint64](1).
+		WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).
 		Link(0, replicaSet).
 		Build()
 	if err != nil {

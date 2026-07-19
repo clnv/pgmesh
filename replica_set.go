@@ -1,4 +1,4 @@
-package sqlcstore
+package pgmesh
 
 // ReplicaSet represents one physical shard. Reads are balanced across replica
 // readers, while writes always use the primary writer and its configured

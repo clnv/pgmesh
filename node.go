@@ -1,4 +1,4 @@
-package sqlcstore
+package pgmesh
 
 // Mirrorable is implemented by generated primary-capable query wrappers.
 // WithMirrors must return a new value and leave the receiver unchanged.

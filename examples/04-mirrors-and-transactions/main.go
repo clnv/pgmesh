@@ -51,7 +51,7 @@ func run(ctx context.Context) error {
 		}
 	}()
 	factory := func(ctx context.Context, dsn string) (
-		sqlcstore.Node[*exampledb.ReadQueries, *exampledb.StoreQueries],
+		pgmesh.Node[*exampledb.ReadQueries, *exampledb.StoreQueries],
 		error,
 	) {
 		if pool, ok := poolsByDSN[dsn]; ok {
@@ -59,44 +59,44 @@ func run(ctx context.Context) error {
 		}
 		pool, poolErr := pgxpool.New(ctx, dsn)
 		if poolErr != nil {
-			return sqlcstore.Node[*exampledb.ReadQueries, *exampledb.StoreQueries]{}, poolErr
+			return pgmesh.Node[*exampledb.ReadQueries, *exampledb.StoreQueries]{}, poolErr
 		}
 		if pingErr := pool.Ping(ctx); pingErr != nil {
 			pool.Close()
-			return sqlcstore.Node[*exampledb.ReadQueries, *exampledb.StoreQueries]{}, pingErr
+			return pgmesh.Node[*exampledb.ReadQueries, *exampledb.StoreQueries]{}, pingErr
 		}
 		poolsByDSN[dsn] = pool
 		return exampledb.NewStoreNode(pool), nil
 	}
 
-	mesh, err := sqlcstore.CreateMesh(ctx, &sqlcstore.Options[
+	mesh, err := pgmesh.CreateMesh(ctx, &pgmesh.Options[
 		*exampledb.ReadQueries,
 		*exampledb.StoreQueries,
 		uint64,
 	]{
-		ReplicaSets: []sqlcstore.ReplicaSetSpec{
+		ReplicaSets: []pgmesh.ReplicaSetSpec{
 			{
 				Name:     shard0Name,
-				Primary:  sqlcstore.Connection{DSN: dsns["ADV_SHARD0_PRIMARY_DSN"]},
-				Replicas: []sqlcstore.Connection{{DSN: dsns["ADV_SHARD0_REPLICA_DSN"]}},
+				Primary:  pgmesh.Connection{DSN: dsns["ADV_SHARD0_PRIMARY_DSN"]},
+				Replicas: []pgmesh.Connection{{DSN: dsns["ADV_SHARD0_REPLICA_DSN"]}},
 			},
 			{
 				Name:     shard1Name,
-				Primary:  sqlcstore.Connection{DSN: dsns["ADV_SHARD1_PRIMARY_DSN"]},
-				Replicas: []sqlcstore.Connection{{DSN: dsns["ADV_SHARD1_REPLICA_DSN"]}},
+				Primary:  pgmesh.Connection{DSN: dsns["ADV_SHARD1_PRIMARY_DSN"]},
+				Replicas: []pgmesh.Connection{{DSN: dsns["ADV_SHARD1_REPLICA_DSN"]}},
 			},
-			{Name: "mirror-0", Primary: sqlcstore.Connection{DSN: dsns["ADV_SHARD0_MIRROR_DSN"]}, Replicas: nil},
-			{Name: "mirror-1", Primary: sqlcstore.Connection{DSN: dsns["ADV_SHARD1_MIRROR_DSN"]}, Replicas: nil},
+			{Name: "mirror-0", Primary: pgmesh.Connection{DSN: dsns["ADV_SHARD0_MIRROR_DSN"]}, Replicas: nil},
+			{Name: "mirror-1", Primary: pgmesh.Connection{DSN: dsns["ADV_SHARD1_MIRROR_DSN"]}, Replicas: nil},
 		},
-		Shards: sqlcstore.Shards{
+		Shards: pgmesh.Shards{
 			NumVShards: 2,
-			Mappings: []sqlcstore.VShardMapping{
+			Mappings: []pgmesh.VShardMapping{
 				{VShards: []uint64{0}, MainReplicaSet: shard0Name, MirrorReplicaSets: []string{"mirror-0"}},
 				{VShards: []uint64{1}, MainReplicaSet: shard1Name, MirrorReplicaSets: []string{"mirror-1"}},
 			},
 		},
 		CreateNode:  factory,
-		ShardHasher: sqlcstore.ModularShardHashFor[uint64](2),
+		ShardHasher: pgmesh.ModularShardHashFor[uint64](2),
 	})
 	if err != nil {
 		return fmt.Errorf("create mesh: %w", err)

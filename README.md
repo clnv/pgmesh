@@ -3,7 +3,7 @@
 [![CI](https://github.com/clnv/pgmesh/actions/workflows/ci.yml/badge.svg)](https://github.com/clnv/pgmesh/actions/workflows/ci.yml)
 
 `pgmesh` is a standalone sqlc companion for PostgreSQL and pgx/v5. Its Go
-package is named `sqlcstore`. A process plugin generates read/write-separated
+package is also named `pgmesh`. A process plugin generates read/write-separated
 query wrappers, while the runtime routes those wrappers across virtual shards,
 primary databases, read replicas, and synchronous write mirrors.
 
@@ -15,7 +15,7 @@ Add the runtime module to an application with:
 go get github.com/clnv/pgmesh
 ```
 
-Import it using the package name `sqlcstore`:
+Import it using the package name `pgmesh`:
 
 ```go
 import "github.com/clnv/pgmesh"
@@ -119,7 +119,7 @@ go build -o bin/sqlc-gen-store ./cmd/sqlc-gen-store
 ```yaml
 version: "2"
 plugins:
-  - name: "sqlcstore"
+  - name: "pgmesh"
     process:
       cmd: "path/to/sqlc-gen-store"
 
@@ -138,7 +138,7 @@ sql:
         emit_result_struct_pointers: true
         emit_pointers_for_null_types: true
     codegen:
-      - plugin: "sqlcstore"
+      - plugin: "pgmesh"
         out: "db"
         options:
           package: "db"
@@ -173,31 +173,31 @@ Open each DSN in a node factory and use the generated node constructor:
 func createNode(
     ctx context.Context,
     dsn string,
-) (sqlcstore.Node[*db.ReadQueries, *db.StoreQueries], error) {
+) (pgmesh.Node[*db.ReadQueries, *db.StoreQueries], error) {
     pool, err := pgxpool.New(ctx, dsn)
     if err != nil {
-        return sqlcstore.Node[*db.ReadQueries, *db.StoreQueries]{}, err
+        return pgmesh.Node[*db.ReadQueries, *db.StoreQueries]{}, err
     }
     return db.NewStoreNode(pool), nil
 }
 
-mesh, err := sqlcstore.CreateMesh(ctx, &sqlcstore.Options[
+mesh, err := pgmesh.CreateMesh(ctx, &pgmesh.Options[
     *db.ReadQueries,
     *db.StoreQueries,
     ShardKey,
 ]{
-    ReplicaSets: []sqlcstore.ReplicaSetSpec{
+    ReplicaSets: []pgmesh.ReplicaSetSpec{
         {
             Name:     "shard-a",
-            Primary:  sqlcstore.Connection{DSN: primaryDSN},
-            Replicas: []sqlcstore.Connection{{DSN: replicaDSN}},
+            Primary:  pgmesh.Connection{DSN: primaryDSN},
+            Replicas: []pgmesh.Connection{{DSN: replicaDSN}},
         },
     },
-    Shards: sqlcstore.Shards{
+    Shards: pgmesh.Shards{
         NumVShards: 1024,
-        Mappings: []sqlcstore.VShardMapping{
+        Mappings: []pgmesh.VShardMapping{
             {
-                VShards:        sqlcstore.VShardRange(0, 1024),
+                VShards:        pgmesh.VShardRange(0, 1024),
                 MainReplicaSet: "shard-a",
             },
         },
@@ -328,9 +328,9 @@ just integration-test
 just integration-down
 ```
 
-Ports can be changed with `SQLCSTORE_SHARD0_PRIMARY_PORT`,
-`SQLCSTORE_SHARD0_REPLICA0_PORT`, `SQLCSTORE_SHARD0_REPLICA1_PORT`,
-`SQLCSTORE_SHARD1_PRIMARY_PORT`, and `SQLCSTORE_SHARD0_MIRROR_PORT`.
+Ports can be changed with `PGMESH_SHARD0_PRIMARY_PORT`,
+`PGMESH_SHARD0_REPLICA0_PORT`, `PGMESH_SHARD0_REPLICA1_PORT`,
+`PGMESH_SHARD1_PRIMARY_PORT`, and `PGMESH_SHARD0_MIRROR_PORT`.
 The test also accepts full DSN overrides using the corresponding `_DSN`
 variables.
 

@@ -1,4 +1,4 @@
-package sqlcstore
+package pgmesh
 
 type ShardHasher[SK any] interface {
 	Hash(SK) uint64
@@ -31,7 +31,7 @@ func (h modularHasher[SK]) Hash(key SK) uint64 {
 
 func ModularShardHashFor[SK IntShardKey](numVShards uint64) ShardHasher[SK] {
 	if numVShards == 0 {
-		panic("sqlcstore: numVShards must not be zero")
+		panic("pgmesh: numVShards must not be zero")
 	}
 	return modularHasher[SK]{numVShards: numVShards}
 }

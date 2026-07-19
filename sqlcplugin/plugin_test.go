@@ -409,7 +409,7 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 	}
 	got := string(response.GetFiles()[0].GetContents())
 	checks := []string{
-		`func NewStoreNode(database DBTX) sqlcstore.Node[*ReadQueries, *StoreQueries]`,
+		`func NewStoreNode(database DBTX) pgmesh.Node[*ReadQueries, *StoreQueries]`,
 		"type ShardResolver[SK any] interface {\n\tP2P(userID int64, peerID int64) SK\n}",
 		"type ShardedQueries[SK any] struct",
 		"func ReadFromPrimary() RouteOption",
@@ -753,7 +753,7 @@ func TestGenerateQualifiesSqlcTypesForSeparatePackage(t *testing.T) {
 			"output_file_name":"generated_store.go",
 			"internal_import_path":"example.test/project/internal/db",
 			"internal_import_alias":"db",
-			"runtime_import_path":"example.test/project/sqlcstore",
+			"runtime_import_path":"example.test/project/pgmesh",
 			"sql_package":"pgx/v5",
 			"query_parameter_limit":1,
 			"emit_params_struct_pointers":true,
@@ -768,7 +768,7 @@ func TestGenerateQualifiesSqlcTypesForSeparatePackage(t *testing.T) {
 	got := string(response.GetFiles()[0].GetContents())
 	checks := []string{
 		`db "example.test/project/internal/db"`,
-		`sqlcstore "example.test/project/sqlcstore"`,
+		`pgmesh "example.test/project/pgmesh"`,
 		"GetUser(ctx context.Context, arg *db.GetUserParams) (*db.User, error)",
 		"User(token db.Token) SK",
 		"main *db.Queries",

@@ -20,7 +20,7 @@ import (
 	"github.com/clnv/pgmesh/integration/fixture"
 )
 
-const integrationEnv = "SQLCSTORE_INTEGRATION"
+const integrationEnv = "PGMESH_INTEGRATION"
 
 type tenantResolver struct{}
 
@@ -29,7 +29,7 @@ func (tenantResolver) Tenant(tenantID int64) uint64 {
 }
 
 type postgresHarness struct {
-	mesh    *sqlcstore.Mesh[*fixture.ReadQueries, *fixture.StoreQueries, uint64]
+	mesh    *pgmesh.Mesh[*fixture.ReadQueries, *fixture.StoreQueries, uint64]
 	queries *fixture.ShardedQueries[uint64]
 	pools   map[string]*pgxpool.Pool
 }
@@ -46,11 +46,11 @@ func newPostgresHarness(t *testing.T) *postgresHarness {
 		portEnv     string
 		defaultPort int
 	}{
-		{name: "shard0-primary", dsnEnv: "SQLCSTORE_SHARD0_PRIMARY_DSN", portEnv: "SQLCSTORE_SHARD0_PRIMARY_PORT", defaultPort: 25432},
-		{name: "shard0-replica0", dsnEnv: "SQLCSTORE_SHARD0_REPLICA0_DSN", portEnv: "SQLCSTORE_SHARD0_REPLICA0_PORT", defaultPort: 25433},
-		{name: "shard0-replica1", dsnEnv: "SQLCSTORE_SHARD0_REPLICA1_DSN", portEnv: "SQLCSTORE_SHARD0_REPLICA1_PORT", defaultPort: 25434},
-		{name: "shard1-primary", dsnEnv: "SQLCSTORE_SHARD1_PRIMARY_DSN", portEnv: "SQLCSTORE_SHARD1_PRIMARY_PORT", defaultPort: 25435},
-		{name: "shard0-mirror", dsnEnv: "SQLCSTORE_SHARD0_MIRROR_DSN", portEnv: "SQLCSTORE_SHARD0_MIRROR_PORT", defaultPort: 25436},
+		{name: "shard0-primary", dsnEnv: "PGMESH_SHARD0_PRIMARY_DSN", portEnv: "PGMESH_SHARD0_PRIMARY_PORT", defaultPort: 25432},
+		{name: "shard0-replica0", dsnEnv: "PGMESH_SHARD0_REPLICA0_DSN", portEnv: "PGMESH_SHARD0_REPLICA0_PORT", defaultPort: 25433},
+		{name: "shard0-replica1", dsnEnv: "PGMESH_SHARD0_REPLICA1_DSN", portEnv: "PGMESH_SHARD0_REPLICA1_PORT", defaultPort: 25434},
+		{name: "shard1-primary", dsnEnv: "PGMESH_SHARD1_PRIMARY_DSN", portEnv: "PGMESH_SHARD1_PRIMARY_PORT", defaultPort: 25435},
+		{name: "shard0-mirror", dsnEnv: "PGMESH_SHARD0_MIRROR_DSN", portEnv: "PGMESH_SHARD0_MIRROR_PORT", defaultPort: 25436},
 	}
 	dsns := make(map[string]string, len(endpoints))
 	for _, endpoint := range endpoints {
@@ -76,44 +76,44 @@ func newPostgresHarness(t *testing.T) *postgresHarness {
 		pools[name] = pool
 		byDSN[dsn] = pool
 	}
-	mesh, err := sqlcstore.CreateMesh(t.Context(), &sqlcstore.Options[
+	mesh, err := pgmesh.CreateMesh(t.Context(), &pgmesh.Options[
 		*fixture.ReadQueries,
 		*fixture.StoreQueries,
 		uint64,
 	]{
-		ReplicaSets: []sqlcstore.ReplicaSetSpec{
+		ReplicaSets: []pgmesh.ReplicaSetSpec{
 			{
 				Name:    "shard0",
-				Primary: sqlcstore.Connection{DSN: dsns["shard0-primary"]},
-				Replicas: []sqlcstore.Connection{
+				Primary: pgmesh.Connection{DSN: dsns["shard0-primary"]},
+				Replicas: []pgmesh.Connection{
 					{DSN: dsns["shard0-replica0"]},
 					{DSN: dsns["shard0-replica1"]},
 				},
 			},
 			{
 				Name:    "shard1",
-				Primary: sqlcstore.Connection{DSN: dsns["shard1-primary"]},
+				Primary: pgmesh.Connection{DSN: dsns["shard1-primary"]},
 			},
 			{
 				Name:    "shard0-mirror",
-				Primary: sqlcstore.Connection{DSN: dsns["shard0-mirror"]},
+				Primary: pgmesh.Connection{DSN: dsns["shard0-mirror"]},
 			},
 		},
-		Shards: sqlcstore.Shards{
+		Shards: pgmesh.Shards{
 			NumVShards: 2,
-			Mappings: []sqlcstore.VShardMapping{
+			Mappings: []pgmesh.VShardMapping{
 				{VShards: []uint64{0}, MainReplicaSet: "shard0", MirrorReplicaSets: []string{"shard0-mirror"}},
 				{VShards: []uint64{1}, MainReplicaSet: "shard1"},
 			},
 		},
-		CreateNode: func(_ context.Context, dsn string) (sqlcstore.Node[*fixture.ReadQueries, *fixture.StoreQueries], error) {
+		CreateNode: func(_ context.Context, dsn string) (pgmesh.Node[*fixture.ReadQueries, *fixture.StoreQueries], error) {
 			pool, ok := byDSN[dsn]
 			if !ok {
-				return sqlcstore.Node[*fixture.ReadQueries, *fixture.StoreQueries]{}, fmt.Errorf("unknown test DSN %q", dsn)
+				return pgmesh.Node[*fixture.ReadQueries, *fixture.StoreQueries]{}, fmt.Errorf("unknown test DSN %q", dsn)
 			}
 			return fixture.NewStoreNode(pool), nil
 		},
-		ShardHasher: sqlcstore.ModularShardHashFor[uint64](2),
+		ShardHasher: pgmesh.ModularShardHashFor[uint64](2),
 	})
 	require.NoError(t, err)
 
@@ -136,7 +136,7 @@ func integrationDSN(dsnOverride, portOverride string, defaultPort int) (string, 
 		}
 		port = parsed
 	}
-	return fmt.Sprintf("postgres://sqlcstore:sqlcstore@127.0.0.1:%d/sqlcstore?sslmode=disable", port), nil
+	return fmt.Sprintf("postgres://pgmesh:pgmesh@127.0.0.1:%d/pgmesh?sslmode=disable", port), nil
 }
 
 func TestIntegrationDSN(t *testing.T) {
@@ -153,13 +153,13 @@ func TestIntegrationDSN(t *testing.T) {
 		{
 			name:        "default port",
 			defaultPort: 25432,
-			want:        "postgres://sqlcstore:sqlcstore@127.0.0.1:25432/sqlcstore?sslmode=disable",
+			want:        "postgres://pgmesh:pgmesh@127.0.0.1:25432/pgmesh?sslmode=disable",
 		},
 		{
 			name:        "port override",
 			port:        "35432",
 			defaultPort: 25432,
-			want:        "postgres://sqlcstore:sqlcstore@127.0.0.1:35432/sqlcstore?sslmode=disable",
+			want:        "postgres://pgmesh:pgmesh@127.0.0.1:35432/pgmesh?sslmode=disable",
 		},
 		{name: "full DSN override", dsn: "postgres://custom", port: "invalid", defaultPort: 25432, want: "postgres://custom"},
 		{name: "invalid port", port: "invalid", defaultPort: 25432, wantErr: "valid TCP port"},

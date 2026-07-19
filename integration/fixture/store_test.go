@@ -129,18 +129,18 @@ func buildTestStore(t *testing.T, primary, replica *fakeDB, mirrors ...*fakeDB) 
 	t.Helper()
 
 	primaryNode := NewStoreNode(primary)
-	replicaSet := sqlcstore.NewReplicaSet(
+	replicaSet := pgmesh.NewReplicaSet(
 		"main",
 		primaryNode,
-		[]sqlcstore.Node[*ReadQueries, *StoreQueries]{NewStoreNode(replica)},
+		[]pgmesh.Node[*ReadQueries, *StoreQueries]{NewStoreNode(replica)},
 	)
 	for _, mirror := range mirrors {
 		if mirror != nil {
 			replicaSet = replicaSet.WithWriteMirrors(NewStoreNode(mirror).Writer())
 		}
 	}
-	mesh, err := sqlcstore.NewBuilder[*ReadQueries, *StoreQueries, uint64](1).
-		WithHasher(sqlcstore.ConstantShardHashFor[uint64](0)).
+	mesh, err := pgmesh.NewBuilder[*ReadQueries, *StoreQueries, uint64](1).
+		WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).
 		Link(0, replicaSet).
 		Build()
 	require.NoError(t, err)

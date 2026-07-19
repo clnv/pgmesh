@@ -1,4 +1,4 @@
-package sqlcstore_test
+package pgmesh_test
 
 import (
 	"context"
@@ -31,26 +31,26 @@ func (q *exampleStoreQueries) Put(value string) []string {
 	return writes
 }
 
-func exampleNode(name string) sqlcstore.Node[*exampleReadQueries, *exampleStoreQueries] {
-	return sqlcstore.NewNode(
+func exampleNode(name string) pgmesh.Node[*exampleReadQueries, *exampleStoreQueries] {
+	return pgmesh.NewNode(
 		&exampleReadQueries{node: name},
 		&exampleStoreQueries{node: name, mirrors: nil},
 	)
 }
 
 func ExampleNewBuilder() {
-	shard0 := sqlcstore.NewReplicaSet(
+	shard0 := pgmesh.NewReplicaSet(
 		"shard-0",
 		exampleNode("shard0-primary"),
-		[]sqlcstore.Node[*exampleReadQueries, *exampleStoreQueries]{
+		[]pgmesh.Node[*exampleReadQueries, *exampleStoreQueries]{
 			exampleNode("shard0-replica0"),
 			exampleNode("shard0-replica1"),
 		},
 	)
-	shard1 := sqlcstore.NewReplicaSet("shard-1", exampleNode("shard1-primary"), nil)
+	shard1 := pgmesh.NewReplicaSet("shard-1", exampleNode("shard1-primary"), nil)
 
-	mesh, err := sqlcstore.NewBuilder[*exampleReadQueries, *exampleStoreQueries, uint64](2).
-		WithHasher(sqlcstore.ModularShardHashFor[uint64](2)).
+	mesh, err := pgmesh.NewBuilder[*exampleReadQueries, *exampleStoreQueries, uint64](2).
+		WithHasher(pgmesh.ModularShardHashFor[uint64](2)).
 		Link(0, shard0).
 		Link(1, shard1).
 		Build()
@@ -88,23 +88,23 @@ func ExampleNewBuilder() {
 }
 
 func ExampleCreateMesh() {
-	mesh, err := sqlcstore.CreateMesh(context.Background(), &sqlcstore.Options[
+	mesh, err := pgmesh.CreateMesh(context.Background(), &pgmesh.Options[
 		*exampleReadQueries,
 		*exampleStoreQueries,
 		uint64,
 	]{
-		ReplicaSets: []sqlcstore.ReplicaSetSpec{
+		ReplicaSets: []pgmesh.ReplicaSetSpec{
 			{
 				Name:     "east",
-				Primary:  sqlcstore.Connection{DSN: "east-primary"},
-				Replicas: []sqlcstore.Connection{{DSN: "east-replica"}},
+				Primary:  pgmesh.Connection{DSN: "east-primary"},
+				Replicas: []pgmesh.Connection{{DSN: "east-replica"}},
 			},
-			{Name: "west", Primary: sqlcstore.Connection{DSN: "west-primary"}},
-			{Name: "archive", Primary: sqlcstore.Connection{DSN: "archive-primary"}},
+			{Name: "west", Primary: pgmesh.Connection{DSN: "west-primary"}},
+			{Name: "archive", Primary: pgmesh.Connection{DSN: "archive-primary"}},
 		},
-		Shards: sqlcstore.Shards{
+		Shards: pgmesh.Shards{
 			NumVShards: 4,
-			Mappings: []sqlcstore.VShardMapping{
+			Mappings: []pgmesh.VShardMapping{
 				{
 					VShards:           []uint64{0, 2},
 					MainReplicaSet:    "east",
@@ -114,12 +114,12 @@ func ExampleCreateMesh() {
 			},
 		},
 		CreateNode: func(_ context.Context, dsn string) (
-			sqlcstore.Node[*exampleReadQueries, *exampleStoreQueries],
+			pgmesh.Node[*exampleReadQueries, *exampleStoreQueries],
 			error,
 		) {
 			return exampleNode(dsn), nil
 		},
-		ShardHasher: sqlcstore.ModularShardHashFor[uint64](4),
+		ShardHasher: pgmesh.ModularShardHashFor[uint64](4),
 	})
 	if err != nil {
 		panic(err)

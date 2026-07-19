@@ -6,7 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	sqlcstore "github.com/clnv/pgmesh"
+	pgmesh "github.com/clnv/pgmesh"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -175,9 +175,9 @@ func (q *StoreQueries) WithMirrors(qs ...*StoreQueries) *StoreQueries {
 	return newStoreQueries(q.WriteQueries.main, mirrors...)
 }
 
-func NewStoreNode(database DBTX) sqlcstore.Node[*ReadQueries, *StoreQueries] {
+func NewStoreNode(database DBTX) pgmesh.Node[*ReadQueries, *StoreQueries] {
 	queries := New(database)
-	return sqlcstore.NewNode(newReadQueries(queries), newStoreQueries(queries))
+	return pgmesh.NewNode(newReadQueries(queries), newStoreQueries(queries))
 }
 
 type ShardResolver[SK any] interface {
@@ -210,11 +210,11 @@ func applyRouteOptions(options ...RouteOption) routeOptions {
 }
 
 type ShardedQueries[SK any] struct {
-	mesh     *sqlcstore.Mesh[*ReadQueries, *StoreQueries, SK]
+	mesh     *pgmesh.Mesh[*ReadQueries, *StoreQueries, SK]
 	resolver ShardResolver[SK]
 }
 
-func NewShardedQueries[SK any](mesh *sqlcstore.Mesh[*ReadQueries, *StoreQueries, SK], resolver ShardResolver[SK]) *ShardedQueries[SK] {
+func NewShardedQueries[SK any](mesh *pgmesh.Mesh[*ReadQueries, *StoreQueries, SK], resolver ShardResolver[SK]) *ShardedQueries[SK] {
 	return &ShardedQueries[SK]{mesh: mesh, resolver: resolver}
 }
 

@@ -30,10 +30,10 @@ func run(ctx context.Context) error {
 	}
 	defer replica.Close()
 
-	replicaSet := sqlcstore.NewReplicaSet(
+	replicaSet := pgmesh.NewReplicaSet(
 		"accounts",
 		exampledb.NewStoreNode(primary),
-		[]sqlcstore.Node[*exampledb.ReadQueries, *exampledb.StoreQueries]{
+		[]pgmesh.Node[*exampledb.ReadQueries, *exampledb.StoreQueries]{
 			exampledb.NewStoreNode(replica),
 		},
 	)
