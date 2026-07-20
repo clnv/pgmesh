@@ -66,7 +66,7 @@ The annotation order is strict:
 Use your project's generation command. In this repository:
 
 ```bash
-just generate-example
+just --justfile examples/justfile generate
 go test ./...
 ```
 

@@ -1,4 +1,4 @@
-name: Generated
+name: Example Code Generation
 
 on:
   push:
@@ -12,12 +12,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: generated-${{ github.ref }}
+  group: example-code-generation-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  generated:
-    name: Generated code is current
+  example-code-generation:
+    name: Example generated code is current
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -37,10 +37,14 @@ jobs:
         with:
           just-version: "1.57.0"
 
-      - name: Regenerate checked-in code
-        run: just generate-example
+      - name: Regenerate integration fixture
+        run: just generate-fixture
 
-      - name: Check for generated-code drift
+      - name: Regenerate example code
+        working-directory: examples
+        run: just generate
+
+      - name: Check for example generated-code drift
         shell: bash
         run: |
           git diff --exit-code -- . ':(exclude)bin/sqlc-gen-store'

@@ -14,7 +14,7 @@
 Regenerate with the pinned repository toolchain:
 
 ```bash
-just generate-example
+just --justfile examples/justfile generate
 go test ./...
 ```
 
@@ -77,6 +77,6 @@ just examples-smoke
 just integration-down
 ```
 
-The default ports and their `PGMESH_*` overrides are documented in the
-[root README](../../README.md#local-postgresql-integration). Ensure Docker is
-available and no other process owns those ports.
+The default ports and their `PGMESH_*` overrides are documented in
+[Development and verification](../development.md#local-postgresql-integration).
+Ensure Docker is available and no other process owns those ports.

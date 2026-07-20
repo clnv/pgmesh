@@ -10,6 +10,8 @@ The documentation is organized by what you are trying to learn or accomplish.
   against one PostgreSQL database.
 - [How-to guides](how-to/README.md) provide focused procedures for extending a
   working application.
+- [Development and verification](development.md) covers the local toolchain,
+  test commands, and Docker-backed PostgreSQL topology.
 
 ## How-to guides
 
@@ -28,5 +30,6 @@ read replicas, virtual sharding, shard-expansion dual writes, and transactions.
 The [`integration/fixture`](../integration/fixture) package is the larger generated
 fixture used by both unit and Docker-backed integration tests.
 
-For the complete annotation and option overview, see the
-[root README](../README.md).
+For query annotations and supported commands, see [Add a query](how-to/add-a-query.md).
+For plugin options and output layouts, see
+[Configure and regenerate code](how-to/configure-generation.md).

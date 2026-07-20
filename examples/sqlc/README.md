@@ -1,12 +1,13 @@
 # sqlc process-plugin example
 
 This directory is a minimal PostgreSQL/sqlc project showing the annotation
-grammar and process-plugin configuration. From the `pgmesh` module:
+grammar and process-plugin configuration. Use the dedicated examples
+`justfile` to build the local plugin and run the pinned sqlc version. From the
+module root:
 
 ```bash
-go build -o bin/sqlc-gen-store ./cmd/sqlc-gen-store
-cd examples/sqlc
-sqlc generate --file sqlc.yaml
+cd examples
+just generate
 ```
 
 The checked-in generated package at `../internal/db` contains node-level

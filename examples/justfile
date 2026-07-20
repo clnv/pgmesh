@@ -1,0 +1,24 @@
+examples-dir := justfile_directory()
+project-root := examples-dir / ".."
+sqlc-version := "v1.31.1"
+sqlc-package := "github.com/sqlc-dev/sqlc/cmd/sqlc@" + sqlc-version
+sqlc-dir := project-root / "bin/sqlc-" + sqlc-version
+sqlc := sqlc-dir / "sqlc"
+
+default:
+    @just --justfile {{ examples-dir }}/justfile --list
+
+# Regenerate the Go package shared by all examples.
+generate: ensure-sqlc
+    cd {{ project-root }} && go build -o bin/sqlc-gen-store ./cmd/sqlc-gen-store
+    cd {{ examples-dir }}/sqlc && {{ sqlc }} generate --file sqlc.yaml
+
+[private]
+ensure-sqlc:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ -x "{{ sqlc }}" ]]; then
+      exit 0
+    fi
+    mkdir -p "{{ sqlc-dir }}"
+    GOBIN="{{ sqlc-dir }}" go install "{{ sqlc-package }}"

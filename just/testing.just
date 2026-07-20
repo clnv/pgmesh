@@ -13,4 +13,8 @@ lint: ensure-golangci-lint
     {{ golangci-lint }} run --config {{ project-root }}/.golangci.yaml --timeout=5m ./...
 
 # Regenerate code and run all non-Docker checks.
-verify-unit: generate-example test vet lint
+verify-unit: generate-fixture
+    just --justfile examples/justfile generate
+    just test
+    just vet
+    just lint

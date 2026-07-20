@@ -10,11 +10,13 @@ from the simplest deployment to the full runtime topology.
 | [`03-sharded-read-write`](03-sharded-read-write) | Two physical shards, each with a replica | Declarative topology, virtual shards, generated routed facade |
 | [`04-mirrors-and-transactions`](04-mirrors-and-transactions) | Two sharded primary/replica sets plus future-shard mirrors | Staged shard-expansion dual writes, primary-pinned transactions, mirror suppression in transactions |
 
-The source schema and annotated queries are in [`sqlc`](sqlc). Regenerate the
-shared package with sqlc v1.31.1 from the module directory:
+The source schema and annotated queries are in [`sqlc`](sqlc). The examples
+have their own [`justfile`](justfile), which uses the repository's pinned sqlc
+version. From the module root, regenerate the shared package with:
 
 ```bash
-just generate-example
+cd examples
+just generate
 ```
 
 Every program reads DSNs from environment variables. Apply `sqlc/schema.sql`
