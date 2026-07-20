@@ -1,13 +1,13 @@
 import "base.just"
 
-export COMPOSE := env_var_or_default("COMPOSE", "docker compose")
-export COMPOSE_FILE := env_var_or_default("COMPOSE_FILE", "integration/docker-compose.yaml")
-export COMPOSE_PROJECT := env_var_or_default("COMPOSE_PROJECT", "pgmesh-integration")
-export PGMESH_SHARD0_PRIMARY_PORT := env_var_or_default("PGMESH_SHARD0_PRIMARY_PORT", "25432")
-export PGMESH_SHARD0_REPLICA0_PORT := env_var_or_default("PGMESH_SHARD0_REPLICA0_PORT", "25433")
-export PGMESH_SHARD0_REPLICA1_PORT := env_var_or_default("PGMESH_SHARD0_REPLICA1_PORT", "25434")
-export PGMESH_SHARD1_PRIMARY_PORT := env_var_or_default("PGMESH_SHARD1_PRIMARY_PORT", "25435")
-export PGMESH_SHARD0_MIRROR_PORT := env_var_or_default("PGMESH_SHARD0_MIRROR_PORT", "25436")
+export COMPOSE := env("COMPOSE", "docker compose")
+export COMPOSE_FILE := env("COMPOSE_FILE", "integration/docker-compose.yaml")
+export COMPOSE_PROJECT := env("COMPOSE_PROJECT", "pgmesh-integration")
+export PGMESH_SHARD0_PRIMARY_PORT := env("PGMESH_SHARD0_PRIMARY_PORT", "25432")
+export PGMESH_SHARD0_REPLICA0_PORT := env("PGMESH_SHARD0_REPLICA0_PORT", "25433")
+export PGMESH_SHARD0_REPLICA1_PORT := env("PGMESH_SHARD0_REPLICA1_PORT", "25434")
+export PGMESH_SHARD1_PRIMARY_PORT := env("PGMESH_SHARD1_PRIMARY_PORT", "25435")
+export PGMESH_SHARD0_MIRROR_PORT := env("PGMESH_SHARD0_MIRROR_PORT", "25436")
 
 # Start the local PostgreSQL topology.
 integration-up:
