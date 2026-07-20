@@ -83,6 +83,7 @@ sharding, write mirrors, and transactions.
 ## Documentation
 
 - [Documentation index](docs/README.md)
+- [Topology concepts and request-routing flow](docs/topology.md)
 - [Purpose, design, and non-goals](docs/purpose-and-rationale.md)
 - [How-to guides](docs/how-to/README.md)
 - [Development and verification](docs/development.md)

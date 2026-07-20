@@ -4,6 +4,9 @@ This guide turns generated query wrappers into a routed `ShardedQueries`
 facade. It assumes relevant SQL queries already have `shard` annotations; see
 [Add a query](add-a-query.md).
 
+If virtual shards, replica sets, or mappings are new terms, start with the
+[topology concepts and request-routing flow](../topology.md).
+
 ## 1. Choose a stable logical key
 
 Implement the generated resolver interface. For an annotation such as
