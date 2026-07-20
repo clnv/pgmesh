@@ -6,6 +6,8 @@ The documentation is organized by what you are trying to learn or accomplish.
 
 - [Purpose and rationale](purpose-and-rationale.md) explains the problems pgmesh
   solves, its design choices, and what remains the application's responsibility.
+- [Topology concepts](topology.md) visually explains virtual shards, physical
+  replica sets, endpoint selection, and the request-routing flow.
 - [Quickstart](quickstart.md) generates and runs a read/write-aware query package
   against one PostgreSQL database.
 - [How-to guides](how-to/README.md) provide focused procedures for extending a
