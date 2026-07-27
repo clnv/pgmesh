@@ -62,8 +62,8 @@ SET tenant_id = EXCLUDED.tenant_id,
 RETURNING id, tenant_id, display_name;
 ```
 
-Every query needs `kind: read` or `kind: write` immediately after the sqlc
-`name` annotation.
+Every query in a pgmesh-managed store needs `kind: read` or `kind: write`
+immediately after the sqlc `name` annotation.
 
 ## 3. Configure sqlc and pgmesh
 
@@ -97,8 +97,6 @@ sql:
         options:
           package: "db"
           output_file_name: "zz_generated_store.go"
-          type: "StoreQueries"
-          constructor: "NewStoreQueries"
           sql_package: "pgx/v5"
           query_parameter_limit: 1
           emit_params_struct_pointers: true
@@ -115,8 +113,8 @@ project-relative path.
 sqlc generate
 ```
 
-Alongside sqlc's output, pgmesh generates `ReadQueries`, `WriteQueries`,
-`StoreQueries`, and `NewStoreNode`.
+Alongside sqlc's output, pgmesh generates the public `Store` interface,
+`NewStore`, topology configuration types, and private routing executors.
 
 Commit generated files when your project checks them in. Regenerate them after
 every schema, query, annotation, or relevant sqlc option change.
@@ -145,7 +143,12 @@ func main() {
     }
     defer pool.Close()
 
-    queries := db.NewStoreQueries(pool)
+    queries, err := db.NewStore(ctx, db.Database(db.DatabaseConfig{
+        Primary: pool,
+    }))
+    if err != nil {
+        log.Fatal(err)
+    }
     account, err := queries.UpsertAccount(ctx, &db.UpsertAccountParams{
         ID:          1,
         TenantID:    42,
@@ -163,9 +166,8 @@ func main() {
 }
 ```
 
-At this stage there is no runtime topology: both methods use the same pool.
-The generated wrapper still establishes the query classification needed for
-replicas, sharding, or staged shard-expansion dual writes later.
+At this stage both methods use the same pool. Adding replicas or changing to a
+sharded configuration does not change the `db.Store` query API.
 
 ## Next steps
 

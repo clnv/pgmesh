@@ -4,234 +4,35 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"errors"
+	"fmt"
 	pgmesh "github.com/clnv/pgmesh"
 	db "github.com/clnv/pgmesh/integration/fixture/separate/internal"
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
+	"log/slog"
 )
 
-// ReadQuerier exposes generated read queries.
-type ReadQuerier interface {
-	// GetAnalysis executes the generated GetAnalysis query.
-	GetAnalysis(ctx context.Context, arg *db.GetAnalysisParams) (*db.Analysis, error)
-	// GetUser executes the generated GetUser query.
-	GetUser(ctx context.Context, arg *db.GetUserParams) (*db.User, error)
-	// ListUsers executes the generated ListUsers query.
-	ListUsers(ctx context.Context) ([]*db.User, error)
-}
-
-// WriteQuerier exposes generated write queries.
-type WriteQuerier interface {
-	// CopyUsers executes the generated CopyUsers query.
-	CopyUsers(ctx context.Context, arg []*db.CopyUsersParams) (int64, error)
-	// CreateUser executes the generated CreateUser query.
-	CreateUser(ctx context.Context, arg *db.CreateUserParams) (*db.User, error)
-}
-
-// StoreQuerier combines the generated read and write query interfaces.
-type StoreQuerier interface {
-	ReadQuerier
-	WriteQuerier
-}
-
-var _ ReadQuerier = (*ReadQueries)(nil)
-var _ WriteQuerier = (*WriteQueries)(nil)
-var _ StoreQuerier = (*StoreQueries)(nil)
-var _ db.Querier = (*StoreQueries)(nil)
-
-// ReadQueries exposes read-only generated queries.
-type ReadQueries struct {
-	main *db.Queries
-}
-
-// NewReadQueries creates a read-only query wrapper.
-func NewReadQueries(database db.DBTX) *ReadQueries {
-	return newReadQueries(db.New(database))
-}
-
-func newReadQueries(q *db.Queries) *ReadQueries {
-	return &ReadQueries{main: q}
-}
-
-// WithTx returns a read wrapper that executes queries through tx.
-func (q *ReadQueries) WithTx(tx pgx.Tx) *ReadQueries {
-	return newReadQueries(q.main.WithTx(tx))
-}
-
-// GetAnalysis executes the generated GetAnalysis query.
-func (q *ReadQueries) GetAnalysis(ctx context.Context, arg *db.GetAnalysisParams) (*db.Analysis, error) {
-	rv0, err := q.main.GetAnalysis(ctx, arg)
-	if err != nil {
-		var zero0 *db.Analysis
-		return zero0, err
-	}
-	return rv0, nil
-}
-
-// GetUser executes the generated GetUser query.
-func (q *ReadQueries) GetUser(ctx context.Context, arg *db.GetUserParams) (*db.User, error) {
-	rv0, err := q.main.GetUser(ctx, arg)
-	if err != nil {
-		var zero0 *db.User
-		return zero0, err
-	}
-	return rv0, nil
-}
-
-// ListUsers executes the generated ListUsers query.
-func (q *ReadQueries) ListUsers(ctx context.Context) ([]*db.User, error) {
-	rv0, err := q.main.ListUsers(ctx)
-	if err != nil {
-		var zero0 []*db.User
-		return zero0, err
-	}
-	return rv0, nil
-}
-
-// WriteQueries exposes primary-capable generated queries.
-type WriteQueries struct {
-	main    *db.Queries
-	mirrors []*db.Queries
-}
-
-// NewWriteQueries creates a primary-capable query wrapper.
-func NewWriteQueries(database db.DBTX) *WriteQueries {
-	return newWriteQueries(db.New(database))
-}
-
-func newWriteQueries(q *db.Queries, mirrors ...*db.Queries) *WriteQueries {
-	return &WriteQueries{main: q, mirrors: mirrors}
-}
-
-// WithTx returns a write wrapper that executes queries through tx.
-func (q *WriteQueries) WithTx(tx pgx.Tx) *WriteQueries {
-	return newWriteQueries(q.main.WithTx(tx))
-}
-
-// WithMirrors returns a copy that also writes to the supplied mirrors.
-func (q *WriteQueries) WithMirrors(qs ...*WriteQueries) *WriteQueries {
-	var mirrors []*db.Queries
-	mirrors = append(mirrors, q.mirrors...)
-	for _, mirror := range qs {
-		if mirror == nil {
-			continue
-		}
-		mirrors = append(mirrors, mirror.main)
-		mirrors = append(mirrors, mirror.mirrors...)
-	}
-	return newWriteQueries(q.main, mirrors...)
-}
-
-func (q *WriteQueries) mirror(fn func(*db.Queries) error) error {
-	for _, mirror := range q.mirrors {
-		if err := fn(mirror); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			return err
-		}
-	}
-	return nil
-}
-
-// CopyUsers executes the generated CopyUsers query.
-func (q *WriteQueries) CopyUsers(ctx context.Context, arg []*db.CopyUsersParams) (int64, error) {
-	rv0, err := q.main.CopyUsers(ctx, arg)
-	if err != nil {
-		var zero0 int64
-		return zero0, err
-	}
-	mirrorErr := q.mirror(func(mirror *db.Queries) error {
-		_, err := mirror.CopyUsers(ctx, arg)
-		return err
-	})
-	return rv0, mirrorErr
-}
-
-// CreateUser executes the generated CreateUser query.
-func (q *WriteQueries) CreateUser(ctx context.Context, arg *db.CreateUserParams) (*db.User, error) {
-	rv0, err := q.main.CreateUser(ctx, arg)
-	if err != nil {
-		var zero0 *db.User
-		return zero0, err
-	}
-	mirrorErr := q.mirror(func(mirror *db.Queries) error {
-		_, err := mirror.CreateUser(ctx, arg)
-		return err
-	})
-	return rv0, mirrorErr
-}
-
-// StoreQueries combines read-only and primary-capable generated queries.
-type StoreQueries struct {
-	*ReadQueries
-	*WriteQueries
-}
-
-// NewStoreQueries creates a combined query wrapper.
-func NewStoreQueries(database db.DBTX) *StoreQueries {
-	return newStoreQueries(db.New(database))
-}
-
-func newStoreQueries(q *db.Queries, mirrors ...*db.Queries) *StoreQueries {
-	return &StoreQueries{
-		ReadQueries:  newReadQueries(q),
-		WriteQueries: newWriteQueries(q, mirrors...),
-	}
-}
-
-// WithTx returns a store wrapper that executes queries through tx.
-func (q *StoreQueries) WithTx(tx pgx.Tx) *StoreQueries {
-	return newStoreQueries(q.WriteQueries.main.WithTx(tx))
-}
-
-// WithMirrors returns a copy that also writes to the supplied mirrors.
-func (q *StoreQueries) WithMirrors(qs ...*StoreQueries) *StoreQueries {
-	var mirrors []*db.Queries
-	mirrors = append(mirrors, q.WriteQueries.mirrors...)
-	for _, mirror := range qs {
-		if mirror == nil || mirror.WriteQueries == nil {
-			continue
-		}
-		mirrors = append(mirrors, mirror.WriteQueries.main)
-		mirrors = append(mirrors, mirror.WriteQueries.mirrors...)
-	}
-	return newStoreQueries(q.WriteQueries.main, mirrors...)
-}
-
-// NewStoreNode creates a pgmesh node backed by database.
-func NewStoreNode(database db.DBTX) pgmesh.Node[*ReadQueries, *StoreQueries] {
-	queries := db.New(database)
-	return pgmesh.NewNode(newReadQueries(queries), newStoreQueries(queries))
-}
-
-// ShardResolver resolves generated query parameters to shard keys.
-type ShardResolver[SK any] interface {
-	// Tenant resolves the "tenant" shard route.
-	Tenant(tenantID int64) SK
-}
-
-type routeOptions struct {
+type queryOptions struct {
 	primary bool
 	tx      pgx.Tx
 }
 
-// RouteOption customizes routing for one generated query call.
-type RouteOption func(*routeOptions)
+// QueryOption customizes routing for one generated query call.
+type QueryOption func(*queryOptions)
 
-// ReadFromPrimary routes a read query to the shard's primary.
-func ReadFromPrimary() RouteOption {
-	return func(options *routeOptions) { options.primary = true }
+// ReadFromPrimary routes a read query to the primary database.
+func ReadFromPrimary() QueryOption {
+	return func(options *queryOptions) { options.primary = true }
 }
 
-// WithTx routes a query through tx and suppresses write mirrors.
-func WithTx(tx pgx.Tx) RouteOption {
-	return func(options *routeOptions) { options.tx = tx }
+// WithTx executes a query through tx and suppresses write mirrors.
+func WithTx(tx pgx.Tx) QueryOption {
+	return func(options *queryOptions) { options.tx = tx }
 }
 
-func applyRouteOptions(options ...RouteOption) routeOptions {
-	var result routeOptions
+func applyQueryOptions(options ...QueryOption) queryOptions {
+	var result queryOptions
 	for _, option := range options {
 		if option != nil {
 			option(&result)
@@ -240,30 +41,142 @@ func applyRouteOptions(options ...RouteOption) routeOptions {
 	return result
 }
 
-// ShardedQueries routes generated queries through a pgmesh mesh.
-type ShardedQueries[SK any] struct {
-	mesh     *pgmesh.Mesh[*ReadQueries, *StoreQueries, SK]
+type queryStore struct {
+	*readQueries
+	*writeQueries
+}
+
+func newQueryStore(q *db.Queries, mirrors ...*db.Queries) *queryStore {
+	return &queryStore{
+		readQueries:  newReadQueries(q),
+		writeQueries: newWriteQueries(q, mirrors...),
+	}
+}
+
+// WithTx returns a store wrapper that executes queries through tx.
+func (q *queryStore) WithTx(tx pgx.Tx) *queryStore {
+	return newQueryStore(q.writeQueries.main.WithTx(tx))
+}
+
+// WithMirrors returns a copy that also writes to the supplied mirrors.
+func (q *queryStore) WithMirrors(qs ...*queryStore) *queryStore {
+	var mirrors []*db.Queries
+	mirrors = append(mirrors, q.writeQueries.mirrors...)
+	for _, mirror := range qs {
+		if mirror == nil || mirror.writeQueries == nil {
+			continue
+		}
+		mirrors = append(mirrors, mirror.writeQueries.main)
+		mirrors = append(mirrors, mirror.writeQueries.mirrors...)
+	}
+	return newQueryStore(q.writeQueries.main, mirrors...)
+}
+
+func newStoreNode(database db.DBTX) pgmesh.Node[*readQueries, *queryStore] {
+	queries := db.New(database)
+	return pgmesh.NewNode(newReadQueries(queries), newQueryStore(queries))
+}
+
+// StoreConfig is an opaque database-topology configuration for Store.
+type StoreConfig interface {
+	buildStore(context.Context) (Store, error)
+}
+
+// DatabaseConfig configures a single primary, optional read replicas, and optional write mirrors.
+type DatabaseConfig struct {
+	Name           string
+	Primary        db.DBTX
+	Replicas       []db.DBTX
+	Mirrors        []db.DBTX
+	TracerProvider trace.TracerProvider
+	MeterProvider  metric.MeterProvider
+	Logger         *slog.Logger
+}
+
+type databaseStoreConfig struct{ config DatabaseConfig }
+
+// Database returns an opaque configuration for a non-sharded store.
+func Database(config DatabaseConfig) StoreConfig {
+	return databaseStoreConfig{config: config}
+}
+
+// NewStore creates the generated query API from an opaque topology configuration.
+func NewStore(ctx context.Context, config StoreConfig) (Store, error) {
+	if config == nil {
+		return nil, fmt.Errorf("pgmesh: store config is nil")
+	}
+	return config.buildStore(ctx)
+}
+
+type meshStore[SK any] struct {
+	mesh     *pgmesh.Mesh[*readQueries, *queryStore, SK]
 	resolver ShardResolver[SK]
 }
 
-// NewShardedQueries creates a routed query facade.
-func NewShardedQueries[SK any](mesh *pgmesh.Mesh[*ReadQueries, *StoreQueries, SK], resolver ShardResolver[SK]) *ShardedQueries[SK] {
-	return &ShardedQueries[SK]{mesh: mesh, resolver: resolver}
+var _ Store = (*meshStore[uint8])(nil)
+
+func (c databaseStoreConfig) buildStore(_ context.Context) (Store, error) {
+	config := c.config
+	if config.Name == "" {
+		config.Name = "default"
+	}
+	if config.Primary == nil {
+		return nil, fmt.Errorf("pgmesh: database primary is nil")
+	}
+	for index, database := range config.Replicas {
+		if database == nil {
+			return nil, fmt.Errorf("pgmesh: database replica %d is nil", index)
+		}
+	}
+	for index, database := range config.Mirrors {
+		if database == nil {
+			return nil, fmt.Errorf("pgmesh: database mirror %d is nil", index)
+		}
+	}
+	primary := newStoreNode(config.Primary)
+	replicas := make([]pgmesh.Node[*readQueries, *queryStore], 0, len(config.Replicas))
+	for _, database := range config.Replicas {
+		replicas = append(replicas, newStoreNode(database))
+	}
+	replicaSet := pgmesh.NewReplicaSet(config.Name, primary, replicas)
+	mirrors := make([]*queryStore, 0, len(config.Mirrors))
+	for _, database := range config.Mirrors {
+		mirrors = append(mirrors, newStoreNode(database).Writer())
+	}
+	replicaSet = replicaSet.WithWriteMirrors(mirrors...)
+	mesh, err := pgmesh.NewBuilder[*readQueries, *queryStore, uint8](1).
+		WithHasher(pgmesh.ConstantShardHashFor[uint8](0)).
+		WithTracerProvider(config.TracerProvider).
+		WithMeterProvider(config.MeterProvider).
+		WithLogger(config.Logger).
+		Link(0, replicaSet).
+		Build()
+	if err != nil {
+		return nil, err
+	}
+	return &meshStore[uint8]{mesh: mesh}, nil
 }
 
-// CreateUser executes the generated query on its resolved shard.
-func (q *ShardedQueries[SK]) CreateUser(ctx context.Context, arg *db.CreateUserParams, routeOptions ...RouteOption) (*db.User, error) {
-	ctx, queryTrace := q.mesh.StartQueryTrace(ctx, "CreateUser", pgmesh.QueryKindWrite)
-	var queryErr error
-	defer func() { queryTrace.End(queryErr) }()
-	shardKey := q.resolver.Tenant(arg.TenantID)
+// CreateUser executes the generated query on its target shard.
+func (q *meshStore[SK]) CreateUser(ctx context.Context, arg *db.CreateUserParams, storeOptions ...QueryOption) (result *db.User, err error) {
+	// Trace the query and record its returned error.
+	ctx, querySpan := q.mesh.StartSpan(ctx, "Store", "CreateUser", pgmesh.QueryKindWrite)
+	defer func() { querySpan.End(err) }()
+
+	// Resolve the shard key for this topology.
+	var shardKey SK
+	if q.resolver != nil {
+		shardKey = q.resolver.Tenant(arg.TenantID)
+	}
 	shard, err := q.mesh.Shard(shardKey)
 	if err != nil {
-		queryErr = err
-		var zero0 *db.User
-		return zero0, err
+		return result, err
 	}
-	options := applyRouteOptions(routeOptions...)
+
+	// Apply options that can override the default route.
+	options := applyQueryOptions(storeOptions...)
+
+	// Select the primary write route, or the transaction when provided.
 	target := shard.Write()
 	mode := pgmesh.RouteModePrimary
 	writeMirrorCount := shard.WriteMirrorCount()
@@ -272,70 +185,80 @@ func (q *ShardedQueries[SK]) CreateUser(ctx context.Context, arg *db.CreateUserP
 		mode = pgmesh.RouteModeTransaction
 		writeMirrorCount = 0
 	}
-	queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)
-	var rv0 *db.User
-	rv0, queryErr = target.CreateUser(ctx, arg)
-	return rv0, queryErr
+
+	// Execute the write after recording its resolved route.
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)
+	return target.CreateUser(ctx, arg)
 }
 
-// GetAnalysis executes the generated query on its resolved shard.
-func (q *ShardedQueries[SK]) GetAnalysis(ctx context.Context, arg *db.GetAnalysisParams, routeOptions ...RouteOption) (*db.Analysis, error) {
-	ctx, queryTrace := q.mesh.StartQueryTrace(ctx, "GetAnalysis", pgmesh.QueryKindRead)
-	var queryErr error
-	defer func() { queryTrace.End(queryErr) }()
-	shardKey := q.resolver.Tenant(arg.TenantID)
+// GetAnalysis executes the generated query on its target shard.
+func (q *meshStore[SK]) GetAnalysis(ctx context.Context, arg *db.GetAnalysisParams, storeOptions ...QueryOption) (result *db.Analysis, err error) {
+	// Trace the query and record its returned error.
+	ctx, querySpan := q.mesh.StartSpan(ctx, "Store", "GetAnalysis", pgmesh.QueryKindRead)
+	defer func() { querySpan.End(err) }()
+
+	// Resolve the shard key for this topology.
+	var shardKey SK
+	if q.resolver != nil {
+		shardKey = q.resolver.Tenant(arg.TenantID)
+	}
 	shard, err := q.mesh.Shard(shardKey)
 	if err != nil {
-		queryErr = err
-		var zero0 *db.Analysis
-		return zero0, err
+		return result, err
 	}
-	options := applyRouteOptions(routeOptions...)
+
+	// Apply options that can override the default route.
+	options := applyQueryOptions(storeOptions...)
+
+	// Transactional reads must use their transaction.
 	if options.tx != nil {
-		queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
-		var rv0 *db.Analysis
-		rv0, queryErr = shard.Write().WithTx(options.tx).GetAnalysis(ctx, arg)
-		return rv0, queryErr
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		return shard.Write().WithTx(options.tx).GetAnalysis(ctx, arg)
 	}
+
+	// Explicit primary reads bypass replicas.
 	if options.primary {
-		queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
-		var rv0 *db.Analysis
-		rv0, queryErr = shard.Write().GetAnalysis(ctx, arg)
-		return rv0, queryErr
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		return shard.Write().GetAnalysis(ctx, arg)
 	}
-	queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
-	var rv0 *db.Analysis
-	rv0, queryErr = shard.Read().GetAnalysis(ctx, arg)
-	return rv0, queryErr
+
+	// Ordinary reads use the shard's replica route.
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	return shard.Read().GetAnalysis(ctx, arg)
 }
 
-// GetUser executes the generated query on its resolved shard.
-func (q *ShardedQueries[SK]) GetUser(ctx context.Context, arg *db.GetUserParams, routeOptions ...RouteOption) (*db.User, error) {
-	ctx, queryTrace := q.mesh.StartQueryTrace(ctx, "GetUser", pgmesh.QueryKindRead)
-	var queryErr error
-	defer func() { queryTrace.End(queryErr) }()
-	shardKey := q.resolver.Tenant(arg.TenantID)
+// GetUser executes the generated query on its target shard.
+func (q *meshStore[SK]) GetUser(ctx context.Context, arg *db.GetUserParams, storeOptions ...QueryOption) (result *db.User, err error) {
+	// Trace the query and record its returned error.
+	ctx, querySpan := q.mesh.StartSpan(ctx, "Store", "GetUser", pgmesh.QueryKindRead)
+	defer func() { querySpan.End(err) }()
+
+	// Resolve the shard key for this topology.
+	var shardKey SK
+	if q.resolver != nil {
+		shardKey = q.resolver.Tenant(arg.TenantID)
+	}
 	shard, err := q.mesh.Shard(shardKey)
 	if err != nil {
-		queryErr = err
-		var zero0 *db.User
-		return zero0, err
+		return result, err
 	}
-	options := applyRouteOptions(routeOptions...)
+
+	// Apply options that can override the default route.
+	options := applyQueryOptions(storeOptions...)
+
+	// Transactional reads must use their transaction.
 	if options.tx != nil {
-		queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
-		var rv0 *db.User
-		rv0, queryErr = shard.Write().WithTx(options.tx).GetUser(ctx, arg)
-		return rv0, queryErr
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		return shard.Write().WithTx(options.tx).GetUser(ctx, arg)
 	}
+
+	// Explicit primary reads bypass replicas.
 	if options.primary {
-		queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
-		var rv0 *db.User
-		rv0, queryErr = shard.Write().GetUser(ctx, arg)
-		return rv0, queryErr
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		return shard.Write().GetUser(ctx, arg)
 	}
-	queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
-	var rv0 *db.User
-	rv0, queryErr = shard.Read().GetUser(ctx, arg)
-	return rv0, queryErr
+
+	// Ordinary reads use the shard's replica route.
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	return shard.Read().GetUser(ctx, arg)
 }

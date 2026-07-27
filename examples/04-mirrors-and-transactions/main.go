@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/clnv/pgmesh"
-	exampledb "github.com/clnv/pgmesh/examples/internal/db"
+	"github.com/clnv/pgmesh/examples/internal/sharded"
 )
 
 const (
@@ -33,11 +33,6 @@ type config struct {
 type poolRegistry struct {
 	byDSN map[string]*pgxpool.Pool
 }
-
-type (
-	accountNode = pgmesh.Node[*exampledb.ReadQueries, *exampledb.StoreQueries]
-	accountMesh = pgmesh.Mesh[*exampledb.ReadQueries, *exampledb.StoreQueries, uint64]
-)
 
 type tenantResolver struct{}
 
@@ -62,18 +57,17 @@ func run(ctx context.Context) error {
 	pools := newPoolRegistry()
 	defer pools.close()
 
-	mesh, err := createMesh(ctx, cfg, pools)
+	store, err := createStore(ctx, cfg, pools)
 	if err != nil {
 		return err
 	}
-	queries := exampledb.NewShardedQueries(mesh, tenantResolver{})
 
 	const tenantID int64 = 42
 	const accountID int64 = 4001
-	if dualWriteErr := dualWriteToFutureShard(ctx, queries, tenantID, accountID); dualWriteErr != nil {
+	if dualWriteErr := dualWriteToFutureShard(ctx, store, tenantID, accountID); dualWriteErr != nil {
 		return dualWriteErr
 	}
-	updated, err := updateInTransaction(ctx, cfg, pools, mesh, queries, tenantID, accountID)
+	updated, err := updateInTransaction(ctx, cfg, pools, store, tenantID, accountID)
 	if err != nil {
 		return err
 	}
@@ -113,23 +107,20 @@ func (r *poolRegistry) close() {
 	}
 }
 
-func (r *poolRegistry) createNode(ctx context.Context, dsn string) (
-	accountNode,
-	error,
-) {
+func (r *poolRegistry) open(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	if pool, ok := r.byDSN[dsn]; ok {
-		return exampledb.NewStoreNode(pool), nil
+		return pool, nil
 	}
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
-		return accountNode{}, fmt.Errorf("open node: %w", err)
+		return nil, fmt.Errorf("open node: %w", err)
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		return accountNode{}, fmt.Errorf("ping node: %w", err)
+		return nil, fmt.Errorf("ping node: %w", err)
 	}
 	r.byDSN[dsn] = pool
-	return exampledb.NewStoreNode(pool), nil
+	return pool, nil
 }
 
 func (r *poolRegistry) pool(dsn string) (*pgxpool.Pool, error) {
@@ -140,29 +131,49 @@ func (r *poolRegistry) pool(dsn string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-func createMesh(
+func createStore(
 	ctx context.Context,
 	cfg config,
 	pools *poolRegistry,
-) (*accountMesh, error) {
-	mesh, err := pgmesh.CreateMesh(ctx, &pgmesh.Options[
-		*exampledb.ReadQueries,
-		*exampledb.StoreQueries,
-		uint64,
-	]{
-		ReplicaSets: []pgmesh.ReplicaSetSpec{
+) (sharded.Store, error) {
+	shard0Primary, err := pools.open(ctx, cfg.shard0Primary)
+	if err != nil {
+		return nil, err
+	}
+	shard0Replica, err := pools.open(ctx, cfg.shard0Replica)
+	if err != nil {
+		return nil, err
+	}
+	shard0Future, err := pools.open(ctx, cfg.shard0Future)
+	if err != nil {
+		return nil, err
+	}
+	shard1Primary, err := pools.open(ctx, cfg.shard1Primary)
+	if err != nil {
+		return nil, err
+	}
+	shard1Replica, err := pools.open(ctx, cfg.shard1Replica)
+	if err != nil {
+		return nil, err
+	}
+	shard1Future, err := pools.open(ctx, cfg.shard1Future)
+	if err != nil {
+		return nil, err
+	}
+	store, err := sharded.NewStore(ctx, sharded.Sharded(sharded.ShardedConfig[uint64]{
+		ReplicaSets: []sharded.ShardDatabaseConfig{
 			{
 				Name:     shard0Name,
-				Primary:  pgmesh.Connection{DSN: cfg.shard0Primary},
-				Replicas: []pgmesh.Connection{{DSN: cfg.shard0Replica}},
+				Primary:  shard0Primary,
+				Replicas: []sharded.DBTX{shard0Replica},
 			},
 			{
 				Name:     shard1Name,
-				Primary:  pgmesh.Connection{DSN: cfg.shard1Primary},
-				Replicas: []pgmesh.Connection{{DSN: cfg.shard1Replica}},
+				Primary:  shard1Primary,
+				Replicas: []sharded.DBTX{shard1Replica},
 			},
-			{Name: futureShard0Name, Primary: pgmesh.Connection{DSN: cfg.shard0Future}, Replicas: nil},
-			{Name: futureShard1Name, Primary: pgmesh.Connection{DSN: cfg.shard1Future}, Replicas: nil},
+			{Name: futureShard0Name, Primary: shard0Future, Replicas: nil},
+			{Name: futureShard1Name, Primary: shard1Future, Replicas: nil},
 		},
 		Shards: pgmesh.Shards{
 			NumVShards: numVShards,
@@ -179,25 +190,25 @@ func createMesh(
 				},
 			},
 		},
-		CreateNode:     pools.createNode,
 		ShardHasher:    pgmesh.ModularShardHashFor[uint64](numVShards),
+		Resolver:       tenantResolver{},
 		TracerProvider: nil,
 		MeterProvider:  nil,
 		Logger:         nil,
-	})
+	}))
 	if err != nil {
-		return nil, fmt.Errorf("create mesh: %w", err)
+		return nil, fmt.Errorf("create store: %w", err)
 	}
-	return mesh, nil
+	return store, nil
 }
 
 func dualWriteToFutureShard(
 	ctx context.Context,
-	queries *exampledb.ShardedQueries[uint64],
+	queries sharded.Store,
 	tenantID int64,
 	accountID int64,
 ) error {
-	_, err := queries.UpsertAccount(ctx, &exampledb.UpsertAccountParams{
+	_, err := queries.UpsertAccount(ctx, &sharded.UpsertAccountParams{
 		ID:          accountID,
 		TenantID:    tenantID,
 		DisplayName: "mirrored write",
@@ -212,16 +223,15 @@ func updateInTransaction(
 	ctx context.Context,
 	cfg config,
 	pools *poolRegistry,
-	mesh *accountMesh,
-	queries *exampledb.ShardedQueries[uint64],
+	queries sharded.Store,
 	tenantID int64,
 	accountID int64,
-) (*exampledb.Account, error) {
-	shard, err := mesh.Shard(tenantResolver{}.Tenant(tenantID))
-	if err != nil {
-		return nil, fmt.Errorf("select transaction shard: %w", err)
+) (*sharded.Account, error) {
+	shardName := shard0Name
+	if (tenantResolver{}).Tenant(tenantID)%numVShards == 1 {
+		shardName = shard1Name
 	}
-	dsn, err := cfg.primaryDSN(shard.Name())
+	dsn, err := cfg.primaryDSN(shardName)
 	if err != nil {
 		return nil, err
 	}
@@ -244,12 +254,12 @@ func updateInTransaction(
 
 	updated, err := queries.UpdateAccountName(
 		ctx,
-		&exampledb.UpdateAccountNameParams{
+		&sharded.UpdateAccountNameParams{
 			TenantID:    tenantID,
 			ID:          accountID,
 			DisplayName: "transactional update",
 		},
-		exampledb.WithTx(tx),
+		sharded.WithTx(tx),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("transactional update: %w", err)

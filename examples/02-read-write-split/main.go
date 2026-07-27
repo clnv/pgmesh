@@ -8,16 +8,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/clnv/pgmesh"
-	exampledb "github.com/clnv/pgmesh/examples/internal/db"
+	"github.com/clnv/pgmesh/examples/internal/sharded"
 )
 
 type databasePools struct {
 	primary *pgxpool.Pool
 	replica *pgxpool.Pool
 }
-
-type accountsReplicaSet = pgmesh.ReplicaSet[*exampledb.ReadQueries, *exampledb.StoreQueries]
 
 func main() {
 	if err := run(context.Background()); err != nil {
@@ -32,15 +29,18 @@ func run(ctx context.Context) error {
 	}
 	defer pools.close()
 
-	replicaSet := newAccountsReplicaSet(pools)
-	account, err := writeAccount(ctx, replicaSet)
+	store, err := newAccountsStore(ctx, pools)
 	if err != nil {
 		return err
 	}
-	if err := printPrimaryRead(ctx, replicaSet, account); err != nil {
+	account, err := writeAccount(ctx, store)
+	if err != nil {
 		return err
 	}
-	return printReplicaRead(ctx, replicaSet, account)
+	if err := printPrimaryRead(ctx, store, account); err != nil {
+		return err
+	}
+	return printReplicaRead(ctx, store, account)
 }
 
 func openDatabasePools(ctx context.Context) (*databasePools, error) {
@@ -61,23 +61,23 @@ func (p *databasePools) close() {
 	p.primary.Close()
 }
 
-func newAccountsReplicaSet(
-	pools *databasePools,
-) *accountsReplicaSet {
-	return pgmesh.NewReplicaSet(
-		"accounts",
-		exampledb.NewStoreNode(pools.primary),
-		[]pgmesh.Node[*exampledb.ReadQueries, *exampledb.StoreQueries]{
-			exampledb.NewStoreNode(pools.replica),
-		},
-	)
+func newAccountsStore(ctx context.Context, pools *databasePools) (sharded.Store, error) {
+	return sharded.NewStore(ctx, sharded.Database(sharded.DatabaseConfig{
+		Name:           "accounts",
+		Primary:        pools.primary,
+		Replicas:       []sharded.DBTX{pools.replica},
+		Mirrors:        nil,
+		TracerProvider: nil,
+		MeterProvider:  nil,
+		Logger:         nil,
+	}))
 }
 
 func writeAccount(
 	ctx context.Context,
-	replicaSet *accountsReplicaSet,
-) (*exampledb.Account, error) {
-	account, err := replicaSet.Write().UpsertAccount(ctx, &exampledb.UpsertAccountParams{
+	store sharded.Store,
+) (*sharded.Account, error) {
+	account, err := store.UpsertAccount(ctx, &sharded.UpsertAccountParams{
 		ID:          2001,
 		TenantID:    42,
 		DisplayName: "primary write",
@@ -90,10 +90,10 @@ func writeAccount(
 
 func printPrimaryRead(
 	ctx context.Context,
-	replicaSet *accountsReplicaSet,
-	account *exampledb.Account,
+	store sharded.Store,
+	account *sharded.Account,
 ) error {
-	strong, err := replicaSet.Write().GetAccount(ctx, accountKey(account))
+	strong, err := store.GetAccount(ctx, accountKey(account), sharded.ReadFromPrimary())
 	if err != nil {
 		return fmt.Errorf("read primary: %w", err)
 	}
@@ -103,10 +103,10 @@ func printPrimaryRead(
 
 func printReplicaRead(
 	ctx context.Context,
-	replicaSet *accountsReplicaSet,
-	account *exampledb.Account,
+	store sharded.Store,
+	account *sharded.Account,
 ) error {
-	replicaCopy, err := replicaSet.Read().GetAccount(ctx, accountKey(account))
+	replicaCopy, err := store.GetAccount(ctx, accountKey(account))
 	if err != nil {
 		return fmt.Errorf("read replica (check replication and lag): %w", err)
 	}
@@ -114,8 +114,8 @@ func printReplicaRead(
 	return nil
 }
 
-func accountKey(account *exampledb.Account) *exampledb.GetAccountParams {
-	return &exampledb.GetAccountParams{TenantID: account.TenantID, ID: account.ID}
+func accountKey(account *sharded.Account) *sharded.GetAccountParams {
+	return &sharded.GetAccountParams{TenantID: account.TenantID, ID: account.ID}
 }
 
 func openPool(ctx context.Context, environment string) (*pgxpool.Pool, error) {

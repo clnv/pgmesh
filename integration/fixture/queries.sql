@@ -12,17 +12,6 @@ INSERT INTO users (id, tenant_id, name)
 VALUES ($1, $2, $3)
 RETURNING id, tenant_id, name;
 
--- name: ListUsers :many
--- kind: read
-SELECT id, tenant_id, name
-FROM users
-ORDER BY id;
-
--- name: CopyUsers :copyfrom
--- kind: write
-INSERT INTO users (id, tenant_id, name)
-VALUES ($1, $2, $3);
-
 -- name: GetAnalysis :one
 -- kind: read
 -- shard: tenant(tenant_id)

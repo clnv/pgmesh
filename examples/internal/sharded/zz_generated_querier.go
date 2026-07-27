@@ -2,20 +2,16 @@
 // versions:
 //   sqlc v1.31.1
 
-package exampledb
+package sharded
 
 import (
 	"context"
 )
 
 type Querier interface {
-	// kind: write
-	CopyAccounts(ctx context.Context, arg []*CopyAccountsParams) (int64, error)
 	// kind: read
 	// shard: tenant(tenant_id)
 	GetAccount(ctx context.Context, arg *GetAccountParams) (*Account, error)
-	// kind: read
-	ListAccounts(ctx context.Context) ([]*Account, error)
 	// kind: write
 	// shard: tenant(tenant_id)
 	UpdateAccountName(ctx context.Context, arg *UpdateAccountNameParams) (*Account, error)

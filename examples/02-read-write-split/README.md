@@ -1,8 +1,9 @@
 # Primary and read replicas
 
-`ReplicaSet.Read()` returns only the generated read wrapper and balances calls
-across replicas. `ReplicaSet.Write()` returns the primary-capable wrapper for
-writes and strong reads.
+The generated `Store` is constructed with one primary and one replica.
+Ordinary reads are balanced across replicas, writes use the primary, and
+`ReadFromPrimary()` requests a strong read. Those routing details do not
+change the query interface used by the application.
 
 ```bash
 RW_PRIMARY_DSN='postgres://user:pass@primary/accounts?sslmode=disable' \

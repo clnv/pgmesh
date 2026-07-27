@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	exampledb "github.com/clnv/pgmesh/examples/internal/db"
+	"github.com/clnv/pgmesh/examples/internal/sharded"
 )
 
 func main() {
@@ -25,7 +25,18 @@ func run(ctx context.Context) error {
 	}
 	defer pool.Close()
 
-	queries := exampledb.NewStoreQueries(pool)
+	queries, err := sharded.NewStore(ctx, sharded.Database(sharded.DatabaseConfig{
+		Name:           "accounts",
+		Primary:        pool,
+		Replicas:       nil,
+		Mirrors:        nil,
+		TracerProvider: nil,
+		MeterProvider:  nil,
+		Logger:         nil,
+	}))
+	if err != nil {
+		return err
+	}
 	account, err := createAccount(ctx, queries)
 	if err != nil {
 		return err
@@ -49,8 +60,8 @@ func openDatabase(ctx context.Context) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-func createAccount(ctx context.Context, queries *exampledb.StoreQueries) (*exampledb.Account, error) {
-	account, err := queries.UpsertAccount(ctx, &exampledb.UpsertAccountParams{
+func createAccount(ctx context.Context, queries sharded.Store) (*sharded.Account, error) {
+	account, err := queries.UpsertAccount(ctx, &sharded.UpsertAccountParams{
 		ID:          1001,
 		TenantID:    42,
 		DisplayName: "single database",
@@ -63,10 +74,10 @@ func createAccount(ctx context.Context, queries *exampledb.StoreQueries) (*examp
 
 func loadAndPrintAccount(
 	ctx context.Context,
-	queries *exampledb.StoreQueries,
-	account *exampledb.Account,
+	queries sharded.Store,
+	account *sharded.Account,
 ) error {
-	loaded, err := queries.GetAccount(ctx, &exampledb.GetAccountParams{
+	loaded, err := queries.GetAccount(ctx, &sharded.GetAccountParams{
 		TenantID: account.TenantID,
 		ID:       account.ID,
 	})

@@ -1,49 +1,26 @@
 # Add read replicas
 
 pgmesh treats replication as deployment infrastructure. Configure and monitor
-PostgreSQL replication first, then expose replica DSNs to the topology.
+PostgreSQL replication first, then add the replica pools to `DatabaseConfig`.
 
-## Declarative topology
+## Configure the store
 
-Add one or more `Replicas` to a physical replica-set specification:
-
-```go
-{
-    Name:    "shard-0",
-    Primary: pgmesh.Connection{DSN: shard0PrimaryDSN},
-    Replicas: []pgmesh.Connection{
-        {DSN: shard0Replica0DSN},
-        {DSN: shard0Replica1DSN},
-    },
-}
-```
-
-`CreateMesh` calls the same node factory for primaries and replicas. The
-generated `NewStoreNode` provides a read-only view and a primary-capable view;
-replica sets expose only the read-only view for configured replicas.
-
-## Direct construction
-
-Without `CreateMesh`, construct a replica set explicitly:
+Application query code continues to use `db.Store`:
 
 ```go
-replicaSet := pgmesh.NewReplicaSet(
-    "accounts",
-    db.NewStoreNode(primaryPool),
-    []pgmesh.Node[*db.ReadQueries, *db.StoreQueries]{
-        db.NewStoreNode(replica0Pool),
-        db.NewStoreNode(replica1Pool),
-    },
-)
+store, err := db.NewStore(ctx, db.Database(db.DatabaseConfig{
+    Name:     "accounts",
+    Primary:  primaryPool,
+    Replicas: []db.DBTX{replica0Pool, replica1Pool},
+}))
 ```
 
 ## Routing behavior
 
-- `replicaSet.Read()` chooses configured replicas round-robin.
-- `replicaSet.Write()` always uses the primary and also supports strong reads.
-- With no replicas, `Read()` falls back to the primary.
-- Generated sharded read methods use `Read()` by default.
-- `db.ReadFromPrimary()` makes a generated sharded read use `Write()`.
+- Ordinary reads choose configured replicas round-robin.
+- Writes always use the primary.
+- With no replicas, reads fall back to the primary.
+- `db.ReadFromPrimary()` routes a read to the primary.
 
 For example:
 
@@ -64,4 +41,4 @@ topology with the desired endpoint set. Endpoint health checking and failover
 are outside pgmesh.
 
 See [`examples/02-read-write-split`](../../examples/02-read-write-split) for a
-runnable direct-construction example.
+runnable example.

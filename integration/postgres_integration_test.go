@@ -29,8 +29,7 @@ func (tenantResolver) Tenant(tenantID int64) uint64 {
 }
 
 type postgresHarness struct {
-	mesh    *pgmesh.Mesh[*fixture.ReadQueries, *fixture.StoreQueries, uint64]
-	queries *fixture.ShardedQueries[uint64]
+	queries fixture.Store
 	pools   map[string]*pgxpool.Pool
 }
 
@@ -65,7 +64,6 @@ func newPostgresHarness(t *testing.T) *postgresHarness {
 			pool.Close()
 		}
 	})
-	byDSN := make(map[string]*pgxpool.Pool, len(dsns))
 	for name, dsn := range dsns {
 		pool, err := pgxpool.New(t.Context(), dsn)
 		require.NoError(t, err, "create pool for %s", name)
@@ -74,29 +72,24 @@ func newPostgresHarness(t *testing.T) *postgresHarness {
 		cancel()
 		require.NoError(t, err, "ping %s", name)
 		pools[name] = pool
-		byDSN[dsn] = pool
 	}
-	mesh, err := pgmesh.CreateMesh(t.Context(), &pgmesh.Options[
-		*fixture.ReadQueries,
-		*fixture.StoreQueries,
-		uint64,
-	]{
-		ReplicaSets: []pgmesh.ReplicaSetSpec{
+	queries, err := fixture.NewStore(t.Context(), fixture.Sharded(fixture.ShardedConfig[uint64]{
+		ReplicaSets: []fixture.ShardDatabaseConfig{
 			{
 				Name:    "shard0",
-				Primary: pgmesh.Connection{DSN: dsns["shard0-primary"]},
-				Replicas: []pgmesh.Connection{
-					{DSN: dsns["shard0-replica0"]},
-					{DSN: dsns["shard0-replica1"]},
+				Primary: pools["shard0-primary"],
+				Replicas: []fixture.DBTX{
+					pools["shard0-replica0"],
+					pools["shard0-replica1"],
 				},
 			},
 			{
 				Name:    "shard1",
-				Primary: pgmesh.Connection{DSN: dsns["shard1-primary"]},
+				Primary: pools["shard1-primary"],
 			},
 			{
 				Name:    "shard0-mirror",
-				Primary: pgmesh.Connection{DSN: dsns["shard0-mirror"]},
+				Primary: pools["shard0-mirror"],
 			},
 		},
 		Shards: pgmesh.Shards{
@@ -106,20 +99,13 @@ func newPostgresHarness(t *testing.T) *postgresHarness {
 				{VShards: []uint64{1}, MainReplicaSet: "shard1"},
 			},
 		},
-		CreateNode: func(_ context.Context, dsn string) (pgmesh.Node[*fixture.ReadQueries, *fixture.StoreQueries], error) {
-			pool, ok := byDSN[dsn]
-			if !ok {
-				return pgmesh.Node[*fixture.ReadQueries, *fixture.StoreQueries]{}, fmt.Errorf("unknown test DSN %q", dsn)
-			}
-			return fixture.NewStoreNode(pool), nil
-		},
 		ShardHasher: pgmesh.ModularShardHashFor[uint64](2),
-	})
+		Resolver:    tenantResolver{},
+	}))
 	require.NoError(t, err)
 
 	return &postgresHarness{
-		mesh:    mesh,
-		queries: fixture.NewShardedQueries(mesh, tenantResolver{}),
+		queries: queries,
 		pools:   pools,
 	}
 }
@@ -321,23 +307,6 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 
 				assert.Equal(t, "transactional", h.userName(t, "shard0-primary", 400, 2))
 				h.assertUserAbsent(t, "shard0-mirror", 400, 2)
-			},
-		},
-		{
-			name: "manually partitioned copyfrom mirrors one shard",
-			run: func(t *testing.T, h *postgresHarness) {
-				shard, err := h.mesh.Shard(2)
-				require.NoError(t, err)
-				count, err := shard.Write().CopyUsers(t.Context(), []*fixture.CopyUsersParams{
-					{ID: 500, TenantID: 2, Name: "copy-a"},
-					{ID: 501, TenantID: 2, Name: "copy-b"},
-				})
-				require.NoError(t, err)
-				assert.Equal(t, int64(2), count)
-				assert.Equal(t, "copy-a", h.userName(t, "shard0-primary", 500, 2))
-				assert.Equal(t, "copy-b", h.userName(t, "shard0-primary", 501, 2))
-				assert.Equal(t, "copy-a", h.userName(t, "shard0-mirror", 500, 2))
-				assert.Equal(t, "copy-b", h.userName(t, "shard0-mirror", 501, 2))
 			},
 		},
 	}

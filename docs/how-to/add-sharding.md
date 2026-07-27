@@ -1,8 +1,8 @@
 # Add sharding
 
-This guide turns generated query wrappers into a routed `ShardedQueries`
-facade. It assumes relevant SQL queries already have `shard` annotations; see
-[Add a query](add-a-query.md).
+This guide changes the configuration behind the generated `Store`. Every query
+in a sharded generated store must have a `shard` annotation; unsharded models
+belong in a separate generated package. See [Add a query](add-a-query.md).
 
 If virtual shards, replica sets, or mappings are new terms, start with the
 [topology concepts and request-routing flow](../topology.md).
@@ -41,25 +41,26 @@ Use a custom `pgmesh.ShardHasher` when the key is not integer-like or when an
 existing system already defines the hash. Changing the hash changes placement
 and therefore requires a data migration.
 
-## 3. Describe physical replica sets
+## 3. Open physical database pools
 
 Each replica set represents one physical shard. Start with one primary per
 set; replicas and mirrors can be added separately.
 
 ```go
-replicaSets := []pgmesh.ReplicaSetSpec{
+replicaSets := []db.ShardDatabaseConfig{
     {
         Name:    "shard-0",
-        Primary: pgmesh.Connection{DSN: shard0DSN},
+        Primary: shard0Pool,
     },
     {
         Name:    "shard-1",
-        Primary: pgmesh.Connection{DSN: shard1DSN},
+        Primary: shard1Pool,
     },
 }
 ```
 
-Names must be unique and non-empty. DSNs must be non-empty.
+Names must be unique and non-empty. The application owns pool construction and
+lifecycle.
 
 ## 4. Map every virtual shard exactly once
 
@@ -87,63 +88,26 @@ For an online physical-shard expansion, use
 [synchronous dual writes](add-write-mirrors.md) to keep the old database active
 while the new database is backfilled and verified, then change the mapping.
 
-## 5. Create nodes and the mesh
-
-The node factory owns connection construction. Retain the pools so the
-application can close them during shutdown and begin transactions on a
-specific primary later.
+## 5. Construct the same Store interface
 
 ```go
-pools := make([]*pgxpool.Pool, 0, len(replicaSets))
-
-createNode := func(ctx context.Context, dsn string) (
-    pgmesh.Node[*db.ReadQueries, *db.StoreQueries],
-    error,
-) {
-    pool, err := pgxpool.New(ctx, dsn)
-    if err != nil {
-        return pgmesh.Node[*db.ReadQueries, *db.StoreQueries]{}, err
-    }
-    if err := pool.Ping(ctx); err != nil {
-        pool.Close()
-        return pgmesh.Node[*db.ReadQueries, *db.StoreQueries]{}, err
-    }
-    pools = append(pools, pool)
-    return db.NewStoreNode(pool), nil
-}
-
-mesh, err := pgmesh.CreateMesh(ctx, &pgmesh.Options[
-    *db.ReadQueries,
-    *db.StoreQueries,
-    uint64,
-]{
+queries, err := db.NewStore(ctx, db.Sharded(db.ShardedConfig[uint64]{
     ReplicaSets: replicaSets,
     Shards: pgmesh.Shards{
         NumVShards: numVShards,
         Mappings:   mappings,
     },
-    CreateNode:  createNode,
     ShardHasher: hasher,
-})
+    Resolver:    tenantResolver{},
+}))
 if err != nil {
-    for _, pool := range pools {
-        pool.Close()
-    }
     return err
 }
 ```
 
-`Mesh` is immutable after construction and safe to share across requests.
-
-## 6. Construct the routed facade
-
-```go
-resolver := tenantResolver{}
-queries := db.NewShardedQueries(mesh, resolver)
-```
-
-Normal routed reads use a replica when one is configured. Writes always use
-the selected physical shard's primary:
+`queries` has type `db.Store`, exactly as it does for a single database or
+read/write-separated configuration. Normal reads use a replica when one is
+configured. Writes use the selected physical shard's primary:
 
 ```go
 account, err := queries.UpsertAccount(ctx, &db.UpsertAccountParams{
@@ -169,7 +133,7 @@ account, err := queries.GetAccount(
 - Confirm the resolver and hasher match the placement used by existing data.
 - Move data before changing a virtual-shard mapping.
 - Keep old and new application versions compatible during a topology rollout.
-- Close every pool created by the node factory during shutdown.
+- Close every configured pool during shutdown.
 
 The complete runnable version is
 [`examples/03-sharded-read-write`](../../examples/03-sharded-read-write).

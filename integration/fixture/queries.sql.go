@@ -9,12 +9,6 @@ import (
 	"context"
 )
 
-type CopyUsersParams struct {
-	ID       int64
-	TenantID int64
-	Name     string
-}
-
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (id, tenant_id, name)
 VALUES ($1, $2, $3)
@@ -81,31 +75,4 @@ func (q *Queries) GetUser(ctx context.Context, arg *GetUserParams) (*User, error
 	var i User
 	err := row.Scan(&i.ID, &i.TenantID, &i.Name)
 	return &i, err
-}
-
-const listUsers = `-- name: ListUsers :many
-SELECT id, tenant_id, name
-FROM users
-ORDER BY id
-`
-
-// kind: read
-func (q *Queries) ListUsers(ctx context.Context) ([]*User, error) {
-	rows, err := q.db.Query(ctx, listUsers)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []*User
-	for rows.Next() {
-		var i User
-		if err := rows.Scan(&i.ID, &i.TenantID, &i.Name); err != nil {
-			return nil, err
-		}
-		items = append(items, &i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }

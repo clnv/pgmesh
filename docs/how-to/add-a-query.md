@@ -24,9 +24,8 @@ Use `read` for non-mutating operations. They can still be sent to the primary
 with `ReadFromPrimary()` or `WithTx()`. Use `write` for inserts, updates,
 deletes, DDL, and other operations that mutate database state.
 
-The classification controls the generated Go surface. Read methods appear on
-`ReadQueries` and `StoreQueries`; write methods appear on `WriteQueries` and
-`StoreQueries`.
+The classification controls internal endpoint selection. Both read and write
+methods appear on the public `Store` interface.
 
 ## 3. Add a shard route when needed
 
@@ -81,16 +80,9 @@ Generation fails when metadata is missing, out of order, malformed, or refers
 to an unknown parameter. Treat that failure as part of the query review rather
 than moving routing into handwritten code.
 
-## 5. Call the right generated surface
+## 5. Call the generated Store
 
-An unsharded query is available on the node-level wrappers:
-
-```go
-accounts, err := shard.Read().ListAccounts(ctx)
-```
-
-A query with a shard annotation is also available on `ShardedQueries`, which
-derives the key and chooses the endpoint:
+Business code always calls the same generated interface:
 
 ```go
 account, err := queries.GetAccount(ctx, &db.GetAccountParams{
@@ -107,7 +99,7 @@ account, err := queries.GetAccount(ctx, arg, db.ReadFromPrimary())
 
 ## Batch and copy queries
 
-`:copyfrom` and `:batch*` methods are generated at the node level, but pgmesh
-does not put them on `ShardedQueries`. Partition inputs by shard in application
-code, select each shard with `mesh.Shard`, and invoke the corresponding
-node-level writer. pgmesh does not perform scatter-gather or merge results.
+`:copyfrom` and `:batch*` methods are supported by unsharded stores. They cannot
+declare shard metadata. A generated store that contains any sharded query
+requires shard metadata on every query, so batch or copy operations that need
+manual partitioning belong in a separate generated store.

@@ -48,12 +48,12 @@ rows; the application must migrate and verify the data before switching it.
 
 ## Request-routing flow
 
-The generated routed facade resolves the application value into a shard key.
-The runtime mesh starts at `ShardHasher` and selects an endpoint:
+The generated `Store` resolves the application value into a shard key. Its
+private runtime mesh starts at `ShardHasher` and selects an endpoint:
 
 ```mermaid
 flowchart TD
-    call["Generated routed query"]
+    call["Generated Store query"]
     resolver["Generated route calls<br/>application ShardResolver"]
     key["Logical shard key"]
     hash["ShardHasher.Hash(key)"]
@@ -89,14 +89,11 @@ primary write.
 | Virtual shard | A logical bucket in the mesh routing table. It is not a PostgreSQL endpoint. |
 | `Shards` | The configuration containing the virtual-shard count and all placement mappings. Despite the name, it does not contain database connections. |
 | `VShardMapping` | Assigns one or more virtual-shard indexes to a main replica set and optional write mirrors. |
-| `Connection` | The DSN for one PostgreSQL endpoint. |
-| `Node[R, W]` | The read-only and primary-capable generated query views for one connection. |
-| `ReplicaSetSpec` | Declarative configuration for one named primary and zero or more read replicas. |
-| `ReplicaSet[R, W]` | The runtime representation of one physical shard: one primary plus its read replicas. |
+| `ShardDatabaseConfig` | Generated configuration for one named primary and zero or more read replicas. |
+| Replica set | The internal representation of one physical shard: one primary plus its read replicas. |
 | `MainReplicaSet` | The active replica set that serves reads and primary writes for a mapping. |
 | `MirrorReplicaSets` | Replica sets whose primaries receive synchronous copies of writes. They do not serve reads for that mapping. |
-| `Mesh` | The validated, immutable table that routes every virtual shard to a runtime replica set. |
-| `Shard` | The result of `Mesh.Shard(key)`: the selected replica set plus the virtual-shard index used to reach it. It is not another database. |
+| Mesh | The private validated table that routes every virtual shard to a replica set. |
 
 Two distinctions prevent most terminology mix-ups:
 
@@ -131,18 +128,18 @@ shards := pgmesh.Shards{
 With this modular hasher, shard key `42` selects virtual shard `2` because
 `42 % 8 == 2`. The first mapping then selects replica set `shard-a`.
 
-## What `CreateMesh` does
+## What `NewStore` does
 
-`CreateMesh` turns the declarative configuration into the runtime objects used
-on every request:
+`NewStore(ctx, config)` turns the opaque generated configuration into the
+private runtime objects used on every request:
 
-1. Validate replica-set names, connections, mirror references, and complete
+1. Validate replica-set names, databases, mirror references, and complete
    virtual-shard coverage.
-2. Call `CreateNode` once for every primary and read-replica connection.
-3. Build each runtime `ReplicaSet` and attach mirror writers to main replica
+2. Build internal read-only and primary-capable executors for every database.
+3. Build each replica set and attach mirror writers to main replica
    sets.
 4. Link every virtual-shard index to its configured main replica set.
-5. Build an immutable `Mesh`, or return the first topology error.
+5. Return the common generated `Store`, or the first topology error.
 
 Continue with [Add sharding](how-to/add-sharding.md) for a complete setup or
 [Add read replicas](how-to/add-read-replicas.md) for endpoint-selection details.

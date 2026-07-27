@@ -1,13 +1,14 @@
 # Progressive usage examples
 
-These programs use the same sqlc-generated package in `internal/db` and build
-from the simplest deployment to the full runtime topology.
+These programs use the sqlc-generated `internal/sharded` account package and
+the `internal/one` unsharded settings package, building from the simplest
+deployment to the full runtime topology.
 
 | Example | Topology | Features |
 | --- | --- | --- |
-| [`01-single-database`](01-single-database) | One PostgreSQL database | Plain generated sqlc wrapper; no `Mesh`, replicas, or shard resolver |
-| [`02-read-write-split`](02-read-write-split) | One primary and one or more replicas | Type-safe primary writes, replica reads, round-robin selection, strong reads |
-| [`03-sharded-read-write`](03-sharded-read-write) | Two physical shards, each with a replica | Declarative topology, virtual shards, generated routed facade |
+| [`01-single-database`](01-single-database) | One PostgreSQL database | Generated `Store` with one-primary `DatabaseConfig` |
+| [`02-read-write-split`](02-read-write-split) | One primary and one or more replicas | The same `Store`, replica reads, round-robin selection, strong reads |
+| [`03-sharded-read-write`](03-sharded-read-write) | Two physical shards, each with a replica | The same `Store`, virtual shards, separate unsharded settings store |
 | [`04-mirrors-and-transactions`](04-mirrors-and-transactions) | Two sharded primary/replica sets plus future-shard mirrors | Staged shard-expansion dual writes, primary-pinned transactions, mirror suppression in transactions |
 
 The source schema and annotated queries are in [`sqlc`](sqlc). The examples

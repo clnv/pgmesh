@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package exampledb
+package one
 
 import (
 	"context"
@@ -15,7 +15,6 @@ type DBTX interface {
 	Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error)
 	Query(context.Context, string, ...interface{}) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...interface{}) pgx.Row
-	CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error)
 }
 
 func New(db DBTX) *Queries {

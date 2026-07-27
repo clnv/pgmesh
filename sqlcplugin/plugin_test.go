@@ -82,8 +82,6 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 		}},
 		PluginOptions: []byte(`{
 			"package": "internal",
-			"type": "StoreQueries",
-			"constructor": "NewStoreQueries",
 			"sql_package": "pgx/v5",
 			"emit_params_struct_pointers": true,
 			"emit_result_struct_pointers": true,
@@ -101,45 +99,79 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
-	if len(resp.GetFiles()) != 1 {
-		t.Fatalf("expected one generated file, got %d", len(resp.GetFiles()))
-	}
+	require.Equal(
+		t,
+		[]string{
+			"store_querier_interfaces.go",
+			"store_querier_read.go",
+			"store_querier_write.go",
+			"store_querier.go",
+			"store_querier_sharded.go",
+		},
+		generatedFileNames(resp),
+	)
+	interfaces := generatedFileContents(t, resp, "store_querier_interfaces.go")
+	assert.Contains(t, interfaces, "type readQuerier interface")
+	assert.Contains(t, interfaces, "type writeQuerier interface")
+	assert.Contains(t, interfaces, "type Store interface")
+	assert.NotContains(t, interfaces, "type readQueries struct")
+	assert.NotContains(t, interfaces, "type writeQueries struct")
 
-	got := string(resp.GetFiles()[0].GetContents())
+	read := generatedFileContents(t, resp, "store_querier_read.go")
+	assert.Contains(t, read, "type readQueries struct")
+	assert.NotContains(t, read, "type writeQueries struct")
+
+	write := generatedFileContents(t, resp, "store_querier_write.go")
+	assert.Contains(t, write, "type writeQueries struct")
+	assert.NotContains(t, write, "type readQueries struct")
+
+	store := generatedFileContents(t, resp, "store_querier.go")
+	assert.Contains(t, store, "type meshStore[SK any] struct")
+	assert.NotContains(t, store, "defaultShardKey")
+	assert.Contains(t, store, "func NewStore(ctx context.Context, config StoreConfig) (Store, error)")
+	assert.Contains(t, store, "func Database(config DatabaseConfig) StoreConfig")
+	assert.NotContains(t, store, "type OneStore")
+	assert.NotContains(t, store, "type ShardedStore")
+	assert.NotContains(t, generatedSource(resp), "oneStore")
+
+	sharded := generatedFileContents(t, resp, "store_querier_sharded.go")
+	assert.NotContains(t, sharded, "type ShardedConfig")
+
+	got := generatedSource(resp)
 	if !strings.Contains(
 		got,
-		"type ReadQuerier interface {\n\t// ListMessagesWithIDs executes the generated ListMessagesWithIDs query.\n"+
+		"type readQuerier interface {\n\t// ListMessagesWithIDs executes the generated ListMessagesWithIDs query.\n"+
 			"\tListMessagesWithIDs(ctx context.Context, ids []xid.ID) ([]*Message, error)\n}",
 	) {
-		t.Fatalf("generated output did not put ListMessagesWithIDs in ReadQuerier:\n%s", got)
+		t.Fatalf("generated output did not put ListMessagesWithIDs in readQuerier:\n%s", got)
 	}
 	if !strings.Contains(
 		got,
-		"type WriteQuerier interface {\n\t// CreateMessage executes the generated CreateMessage query.\n"+
+		"type writeQuerier interface {\n\t// CreateMessage executes the generated CreateMessage query.\n"+
 			"\tCreateMessage(ctx context.Context, arg *CreateMessageParams) (*Message, error)\n}",
 	) {
-		t.Fatalf("generated output did not put CreateMessage in WriteQuerier:\n%s", got)
+		t.Fatalf("generated output did not put CreateMessage in writeQuerier:\n%s", got)
 	}
-	if !strings.Contains(got, "type StoreQuerier interface") {
-		t.Fatalf("generated output did not include StoreQuerier:\n%s", got)
+	if !strings.Contains(got, "type Store interface") {
+		t.Fatalf("generated output did not include Store:\n%s", got)
 	}
-	if !strings.Contains(got, "type StoreQueries struct {\n\t*ReadQueries\n\t*WriteQueries\n}") {
-		t.Fatalf("generated output did not compose StoreQueries from ReadQueries and WriteQueries:\n%s", got)
+	if !strings.Contains(got, "type queryStore struct {\n\t*readQueries\n\t*writeQueries\n}") {
+		t.Fatalf("generated output did not compose internal queryStore:\n%s", got)
 	}
-	if !strings.Contains(got, "var _ ReadQuerier = (*ReadQueries)(nil)") {
-		t.Fatalf("generated output did not assert ReadQueries implements ReadQuerier:\n%s", got)
+	if !strings.Contains(got, "var _ readQuerier = (*readQueries)(nil)") {
+		t.Fatalf("generated output did not assert readQueries implements readQuerier:\n%s", got)
 	}
-	if !strings.Contains(got, "var _ WriteQuerier = (*WriteQueries)(nil)") {
-		t.Fatalf("generated output did not assert WriteQueries implements WriteQuerier:\n%s", got)
+	if !strings.Contains(got, "var _ writeQuerier = (*writeQueries)(nil)") {
+		t.Fatalf("generated output did not assert writeQueries implements writeQuerier:\n%s", got)
 	}
-	readBody := generatedMethodBody(t, got, "ReadQueries", "ListMessagesWithIDs")
+	readBody := generatedMethodBody(t, got, "readQueries", "ListMessagesWithIDs")
 	if strings.Contains(readBody, ".mirror(") || strings.Contains(readBody, "mirror.ListMessagesWithIDs") {
 		t.Fatalf("read query should not mirror:\n%s", readBody)
 	}
 	if !strings.Contains(readBody, "return rv0, nil") {
 		t.Fatalf("read query should return main query result without mirror error:\n%s", readBody)
 	}
-	writeBody := generatedMethodBody(t, got, "WriteQueries", "CreateMessage")
+	writeBody := generatedMethodBody(t, got, "writeQueries", "CreateMessage")
 	if !strings.Contains(writeBody, "mirror.CreateMessage") {
 		t.Fatalf("write query should mirror:\n%s", writeBody)
 	}
@@ -164,6 +196,48 @@ func generatedMethodBody(t *testing.T, source, receiverType, methodName string) 
 		t.Fatalf("generated output missing end of %s method:\n%s", methodName, rest)
 	}
 	return rest[:end+3]
+}
+
+func generatedSource(response *plugin.GenerateResponse) string {
+	var source strings.Builder
+	for _, file := range response.GetFiles() {
+		source.Write(file.GetContents())
+		source.WriteString("\n")
+	}
+	return source.String()
+}
+
+func generatedFileNames(response *plugin.GenerateResponse) []string {
+	names := make([]string, 0, len(response.GetFiles()))
+	for _, file := range response.GetFiles() {
+		names = append(names, file.GetName())
+	}
+	return names
+}
+
+func generatedFileContents(t *testing.T, response *plugin.GenerateResponse, name string) string {
+	t.Helper()
+	for _, file := range response.GetFiles() {
+		if file.GetName() == name {
+			return string(file.GetContents())
+		}
+	}
+	t.Fatalf("generated response missing %s", name)
+	return ""
+}
+
+func TestNamedResultsSignatureAvoidsParameterAndReceiverNames(t *testing.T) {
+	t.Parallel()
+
+	signature, names, errName := namedResultsSignature(
+		[]argument{{name: "result"}, {name: "err"}},
+		[]string{"int64", "error"},
+		"result2",
+	)
+
+	assert.Equal(t, " (result3 int64, err2 error)", signature)
+	assert.Equal(t, []string{"result3", "err2"}, names)
+	assert.Equal(t, "err2", errName)
 }
 
 func TestOutputPackageName(t *testing.T) {
@@ -388,17 +462,9 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 				},
 				Columns: []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}},
 			},
-			{
-				Name:     "ListGlobalMessages",
-				Cmd:      ":many",
-				Comments: []string{"kind: read"},
-				Columns:  []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}},
-			},
 		},
 		PluginOptions: []byte(`{
 			"package":"db",
-			"type":"StoreQueries",
-			"constructor":"NewStoreQueries",
 			"sql_package":"pgx/v5",
 			"query_parameter_limit":1,
 			"emit_params_struct_pointers":true
@@ -409,42 +475,84 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
-	got := string(response.GetFiles()[0].GetContents())
+	got := generatedSource(response)
 	checks := []string{
-		`func NewStoreNode(database DBTX) pgmesh.Node[*ReadQueries, *StoreQueries]`,
+		`func NewStore(ctx context.Context, config StoreConfig) (Store, error)`,
+		`func Database(config DatabaseConfig) StoreConfig`,
+		`func Sharded[SK any](config ShardedConfig[SK]) StoreConfig`,
+		`func newStoreNode(database DBTX) pgmesh.Node[*readQueries, *queryStore]`,
 		"type ShardResolver[SK any] interface {\n\t// P2P resolves the \"p2p\" shard route.\n" +
 			"\tP2P(userID int64, peerID int64) SK\n}",
-		"type ShardedQueries[SK any] struct",
-		"func ReadFromPrimary() RouteOption",
-		"func WithTx(tx pgx.Tx) RouteOption",
-		"shardKey := q.resolver.P2P(arg.UserID, arg.PeerID)",
-		`q.mesh.StartQueryTrace(ctx, "ListP2PMessages", pgmesh.QueryKindRead)`,
-		`q.mesh.StartQueryTrace(ctx, "CreateP2PMessage", pgmesh.QueryKindWrite)`,
-		"defer func() { queryTrace.End(queryErr) }()",
-		"queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)",
-		"queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)",
-		"rv0, queryErr = shard.Read().ListP2PMessages(ctx, arg)",
-		"rv0, queryErr = shard.Write().WithTx(options.tx).ListP2PMessages(ctx, arg)",
+		"type meshStore[SK any] struct",
+		"type Store interface",
+		"func ReadFromPrimary() QueryOption",
+		"func WithTx(tx pgx.Tx) QueryOption",
+		"func (q *meshStore[SK]) ListP2PMessages(ctx context.Context, arg *ListP2PMessagesParams, storeOptions ...QueryOption) (result []int64, err error)",
+		"var shardKey SK",
+		"shardKey = q.resolver.P2P(arg.UserID, arg.PeerID)",
+		`q.mesh.StartSpan(ctx, "Store", "ListP2PMessages", pgmesh.QueryKindRead)`,
+		`q.mesh.StartSpan(ctx, "Store", "CreateP2PMessage", pgmesh.QueryKindWrite)`,
+		"// Trace the query and record its returned error.",
+		"defer func() { querySpan.End(err) }()",
+		"// Resolve the shard key for this topology.",
+		"// Apply options that can override the default route.",
+		"querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)",
+		"querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)",
+		"return shard.Read().ListP2PMessages(ctx, arg)",
+		"return shard.Write().WithTx(options.tx).ListP2PMessages(ctx, arg)",
 		"target := shard.Write()",
 		"writeMirrorCount := shard.WriteMirrorCount()",
-		"queryTrace.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)",
-		"rv0, queryErr = target.CreateP2PMessage(ctx, arg)",
+		"querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)",
+		"return target.CreateP2PMessage(ctx, arg)",
 	}
 	for _, check := range checks {
 		if !strings.Contains(got, check) {
 			t.Fatalf("generated output missing %q:\n%s", check, got)
 		}
 	}
-	if strings.Contains(got, "func (q *ShardedQueries[SK]) ListGlobalMessages") {
-		t.Fatalf("unannotated query unexpectedly appeared in routed facade:\n%s", got)
-	}
-	if !strings.Contains(got, "func (q *ReadQueries) ListGlobalMessages") {
-		t.Fatalf("unannotated query missing from node-level wrapper:\n%s", got)
-	}
-	if !strings.Contains(got, "func (q *StoreQueries) WithTx(tx pgx.Tx) *StoreQueries") ||
-		!strings.Contains(got, "return newStoreQueries(q.WriteQueries.main.WithTx(tx))") {
+	meshReadBody := generatedMethodBody(t, got, "meshStore[SK]", "ListP2PMessages")
+	assert.NotContains(t, meshReadBody, "var queryErr error")
+	assert.NotContains(t, meshReadBody, "queryErr =")
+	assert.Equal(t, 1, strings.Count(got, "type meshStore[SK any] struct"))
+	assert.Equal(t, 1, strings.Count(got, "func (q *meshStore[SK]) ListP2PMessages("))
+	assert.NotContains(t, got, "defaultShardKey")
+	assert.NotContains(t, got, "type databaseStore struct")
+	assert.NotContains(t, got, "type shardedStore[SK any] struct")
+	if !strings.Contains(got, "func (q *queryStore) WithTx(tx pgx.Tx) *queryStore") ||
+		!strings.Contains(got, "return newQueryStore(q.writeQueries.main.WithTx(tx))") {
 		t.Fatalf("transaction wrapper must drop mirrors:\n%s", got)
 	}
+}
+
+func TestGenerateRejectsMixedShardedAndUnshardedQueries(t *testing.T) {
+	t.Parallel()
+
+	int8Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int8"}
+	_, err := Generate(t.Context(), &plugin.GenerateRequest{
+		Settings: &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "db"}},
+		Catalog:  &plugin.Catalog{DefaultSchema: "public"},
+		Queries: []*plugin.Query{
+			{
+				Name:     "GetUser",
+				Cmd:      ":one",
+				Comments: []string{"kind: read", "shard: tenant(tenant_id)"},
+				Params: []*plugin.Parameter{{
+					Number: 1,
+					Column: &plugin.Column{Name: "tenant_id", Type: int8Type, NotNull: true},
+				}},
+				Columns: []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}},
+			},
+			{
+				Name:     "ListUsers",
+				Cmd:      ":many",
+				Comments: []string{"kind: read"},
+				Columns:  []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}},
+			},
+		},
+		PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5"}`),
+	})
+	require.ErrorContains(t, err, "query ListUsers must declare shard metadata")
+	require.ErrorContains(t, err, "move unsharded queries to another generated store")
 }
 
 func TestGenerateResolvesShardOperandsForIndividualParameters(t *testing.T) {
@@ -469,8 +577,8 @@ func TestGenerateResolvesShardOperandsForIndividualParameters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
-	got := string(response.GetFiles()[0].GetContents())
-	if !strings.Contains(got, "shardKey := q.resolver.P2P(userID, peerID)") {
+	got := generatedSource(response)
+	if !strings.Contains(got, "shardKey = q.resolver.P2P(userID, peerID)") {
 		t.Fatalf("route did not reference individual parameters:\n%s", got)
 	}
 }
@@ -490,15 +598,15 @@ func TestGenerateIgnoreMirrorErrorOption(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got := string(response.GetFiles()[0].GetContents())
-	mirrorBody := generatedMethodBody(t, got, "WriteQueries", "mirror")
+	got := generatedSource(response)
+	mirrorBody := generatedMethodBody(t, got, "writeQueries", "mirror")
 	assert.Contains(t, mirrorBody, "if err := fn(mirror); err != nil {\n\t\t\tcontinue")
 	assert.NotContains(t, mirrorBody, "return err")
 	assert.NotContains(t, got, `"database/sql"`)
 	assert.NotContains(t, got, `"errors"`)
 }
 
-func TestGenerateEmptyQuerySetDoesNotEmitUnusedContextImport(t *testing.T) {
+func TestGenerateEmptyQuerySetStillEmitsStoreConfiguration(t *testing.T) {
 	t.Parallel()
 
 	response, err := Generate(t.Context(), &plugin.GenerateRequest{
@@ -507,7 +615,7 @@ func TestGenerateEmptyQuerySetDoesNotEmitUnusedContextImport(t *testing.T) {
 		PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5"}`),
 	})
 	require.NoError(t, err)
-	assert.NotContains(t, string(response.GetFiles()[0].GetContents()), `"context"`)
+	assert.Contains(t, generatedSource(response), "func NewStore(ctx context.Context, config StoreConfig) (Store, error)")
 }
 
 func TestGenerateRejectsInvalidRoutingConfigurations(t *testing.T) {
@@ -702,7 +810,7 @@ func TestGenerateSupportsAllNodeLevelCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
-	got := string(response.GetFiles()[0].GetContents())
+	got := generatedSource(response)
 	wantSignatures := []string{
 		"Query0(ctx context.Context) (int64, error)",
 		"Query1(ctx context.Context) ([]int64, error)",
@@ -772,18 +880,28 @@ func TestGenerateQualifiesSqlcTypesForSeparatePackage(t *testing.T) {
 		}`),
 	})
 	require.NoError(t, err)
-	require.Len(t, response.GetFiles(), 1)
-	assert.Equal(t, "generated_store.go", response.GetFiles()[0].GetName())
+	require.Equal(
+		t,
+		[]string{
+			"generated_store_interfaces.go",
+			"generated_store_read.go",
+			"generated_store_write.go",
+			"generated_store.go",
+			"generated_store_sharded.go",
+		},
+		generatedFileNames(response),
+	)
 
-	got := string(response.GetFiles()[0].GetContents())
+	got := generatedSource(response)
 	checks := []string{
 		`db "example.test/project/internal/db"`,
 		`pgmesh "example.test/project/pgmesh"`,
 		"GetUser(ctx context.Context, arg *db.GetUserParams) (*db.User, error)",
+		"GetUser(ctx context.Context, arg *db.GetUserParams, storeOptions ...QueryOption) (*db.User, error)",
 		"User(token db.Token) SK",
 		"main *db.Queries",
-		"func NewReadQueries(database db.DBTX) *ReadQueries",
-		"var _ db.Querier = (*StoreQueries)(nil)",
+		"func newReadQueries(q *db.Queries) *readQueries",
+		"var _ db.Querier = (*queryStore)(nil)",
 		"queries := db.New(database)",
 	}
 	for _, check := range checks {
@@ -820,11 +938,11 @@ func TestGenerateAppliesRenameAndNullableOptions(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got := string(response.GetFiles()[0].GetContents())
+	got := generatedSource(response)
 	checks := []string{
 		"FindUser(ctx context.Context, arg *FindUserParams) (*string, error)",
 		"ResolveTenant(accountID int64) SK",
-		"shardKey := q.resolver.ResolveTenant(arg.AccountID)",
+		"shardKey = q.resolver.ResolveTenant(arg.AccountID)",
 	}
 	for _, check := range checks {
 		assert.Contains(t, got, check)

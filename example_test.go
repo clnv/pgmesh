@@ -7,23 +7,23 @@ import (
 	"github.com/clnv/pgmesh"
 )
 
-type exampleReadQueries struct {
+type exampleReader struct {
 	node string
 }
 
-type exampleStoreQueries struct {
+type exampleWriter struct {
 	node    string
-	mirrors []*exampleStoreQueries
+	mirrors []*exampleWriter
 }
 
-func (q *exampleStoreQueries) WithMirrors(mirrors ...*exampleStoreQueries) *exampleStoreQueries {
-	return &exampleStoreQueries{
+func (q *exampleWriter) WithMirrors(mirrors ...*exampleWriter) *exampleWriter {
+	return &exampleWriter{
 		node:    q.node,
-		mirrors: append(append([]*exampleStoreQueries(nil), q.mirrors...), mirrors...),
+		mirrors: append(append([]*exampleWriter(nil), q.mirrors...), mirrors...),
 	}
 }
 
-func (q *exampleStoreQueries) Put(value string) []string {
+func (q *exampleWriter) Put(value string) []string {
 	writes := []string{q.node + ":" + value}
 	for _, mirror := range q.mirrors {
 		writes = append(writes, mirror.node+":"+value)
@@ -31,10 +31,10 @@ func (q *exampleStoreQueries) Put(value string) []string {
 	return writes
 }
 
-func exampleNode(name string) pgmesh.Node[*exampleReadQueries, *exampleStoreQueries] {
+func exampleNode(name string) pgmesh.Node[*exampleReader, *exampleWriter] {
 	return pgmesh.NewNode(
-		&exampleReadQueries{node: name},
-		&exampleStoreQueries{node: name, mirrors: nil},
+		&exampleReader{node: name},
+		&exampleWriter{node: name, mirrors: nil},
 	)
 }
 
@@ -42,14 +42,14 @@ func ExampleNewBuilder() {
 	shard0 := pgmesh.NewReplicaSet(
 		"shard-0",
 		exampleNode("shard0-primary"),
-		[]pgmesh.Node[*exampleReadQueries, *exampleStoreQueries]{
+		[]pgmesh.Node[*exampleReader, *exampleWriter]{
 			exampleNode("shard0-replica0"),
 			exampleNode("shard0-replica1"),
 		},
 	)
 	shard1 := pgmesh.NewReplicaSet("shard-1", exampleNode("shard1-primary"), nil)
 
-	mesh, err := pgmesh.NewBuilder[*exampleReadQueries, *exampleStoreQueries, uint64](2).
+	mesh, err := pgmesh.NewBuilder[*exampleReader, *exampleWriter, uint64](2).
 		WithHasher(pgmesh.ModularShardHashFor[uint64](2)).
 		Link(0, shard0).
 		Link(1, shard1).
@@ -89,8 +89,8 @@ func ExampleNewBuilder() {
 
 func ExampleCreateMesh() {
 	mesh, err := pgmesh.CreateMesh(context.Background(), &pgmesh.Options[
-		*exampleReadQueries,
-		*exampleStoreQueries,
+		*exampleReader,
+		*exampleWriter,
 		uint64,
 	]{
 		ReplicaSets: []pgmesh.ReplicaSetSpec{
@@ -114,7 +114,7 @@ func ExampleCreateMesh() {
 			},
 		},
 		CreateNode: func(_ context.Context, dsn string) (
-			pgmesh.Node[*exampleReadQueries, *exampleStoreQueries],
+			pgmesh.Node[*exampleReader, *exampleWriter],
 			error,
 		) {
 			return exampleNode(dsn), nil

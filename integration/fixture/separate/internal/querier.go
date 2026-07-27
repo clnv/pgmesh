@@ -10,8 +10,6 @@ import (
 
 type Querier interface {
 	// kind: write
-	CopyUsers(ctx context.Context, arg []*CopyUsersParams) (int64, error)
-	// kind: write
 	// shard: tenant(tenant_id)
 	CreateUser(ctx context.Context, arg *CreateUserParams) (*User, error)
 	// kind: read
@@ -20,8 +18,6 @@ type Querier interface {
 	// kind: read
 	// shard: tenant(tenant_id)
 	GetUser(ctx context.Context, arg *GetUserParams) (*User, error)
-	// kind: read
-	ListUsers(ctx context.Context) ([]*User, error)
 }
 
 var _ Querier = (*Queries)(nil)

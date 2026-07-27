@@ -30,14 +30,14 @@ Register the future shard as another replica set. During this phase, the old
 database remains the main replica set:
 
 ```go
-ReplicaSets: []pgmesh.ReplicaSetSpec{
+ReplicaSets: []db.ShardDatabaseConfig{
     {
         Name:    "old-shard",
-        Primary: pgmesh.Connection{DSN: oldShardDSN},
+        Primary: oldShardPool,
     },
     {
         Name:    "new-shard",
-        Primary: pgmesh.Connection{DSN: newShardDSN},
+        Primary: newShardPool,
     },
 },
 ```

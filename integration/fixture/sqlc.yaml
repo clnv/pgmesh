@@ -30,8 +30,6 @@ sql:
         options:
           package: "fixture"
           output_file_name: "zz_generated_store.go"
-          type: "StoreQueries"
-          constructor: "NewStoreQueries"
           sql_package: "pgx/v5"
           query_parameter_limit: 1
           emit_params_struct_pointers: true
@@ -63,8 +61,6 @@ sql:
         options:
           package: "store"
           output_file_name: "zz_generated_store.go"
-          type: "StoreQueries"
-          constructor: "NewStoreQueries"
           internal_import_path: "github.com/clnv/pgmesh/integration/fixture/separate/internal"
           internal_import_alias: "db"
           sql_package: "pgx/v5"

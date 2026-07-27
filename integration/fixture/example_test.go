@@ -7,24 +7,31 @@ import (
 	"github.com/clnv/pgmesh"
 )
 
-func ExampleShardedQueries() {
+func ExampleStore() {
 	log := &callLog{}
-	primary := NewStoreNode(&fakeDB{name: "primary", log: log})
-	replica := NewStoreNode(&fakeDB{name: "replica", log: log})
-	mirror := NewStoreNode(&fakeDB{name: "mirror", log: log})
-	replicaSet := pgmesh.NewReplicaSet(
-		"main",
-		primary,
-		[]pgmesh.Node[*ReadQueries, *StoreQueries]{replica},
-	).WithWriteMirrors(mirror.Writer())
-	mesh, err := pgmesh.NewBuilder[*ReadQueries, *StoreQueries, uint64](1).
-		WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).
-		Link(0, replicaSet).
-		Build()
+	queries, err := NewStore(context.Background(), Sharded(ShardedConfig[uint64]{
+		ReplicaSets: []ShardDatabaseConfig{
+			{
+				Name:     "main",
+				Primary:  &fakeDB{name: "primary", log: log},
+				Replicas: []DBTX{&fakeDB{name: "replica", log: log}},
+			},
+			{Name: "mirror", Primary: &fakeDB{name: "mirror", log: log}},
+		},
+		Shards: pgmesh.Shards{
+			NumVShards: 1,
+			Mappings: []pgmesh.VShardMapping{{
+				VShards:           []uint64{0},
+				MainReplicaSet:    "main",
+				MirrorReplicaSets: []string{"mirror"},
+			}},
+		},
+		ShardHasher: pgmesh.ConstantShardHashFor[uint64](0),
+		Resolver:    tenantResolver{},
+	}))
 	if err != nil {
 		panic(err)
 	}
-	queries := NewShardedQueries(mesh, tenantResolver{})
 
 	ctx := context.Background()
 	if _, err := queries.GetUser(ctx, &GetUserParams{TenantID: 10, ID: 20}); err != nil {

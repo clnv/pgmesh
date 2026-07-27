@@ -7,9 +7,9 @@ migration, keep this topology active while backfilling and reconciling data,
 then switch the virtual-shard mapping to make the new database authoritative.
 
 A transaction must be opened from the selected shard's retained primary pool
-and passed with `WithTx`; generated transaction wrappers deliberately suppress
-mirror fan-out. Transactional writes therefore need a separate outbox, CDC, or
-replay path before a shard cutover.
+and passed with `WithTx`; the generated `Store` deliberately suppresses mirror
+fan-out for that call. Transactional writes therefore need a separate outbox,
+CDC, or replay path before a shard cutover.
 
 See the [shard-expansion guide](../../docs/how-to/add-write-mirrors.md) for the
 complete old-to-new rollout and rollback sequence.
