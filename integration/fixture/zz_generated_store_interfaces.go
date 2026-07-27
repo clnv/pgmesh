@@ -18,6 +18,8 @@ type readQuerier interface {
 type writeQuerier interface {
 	// CreateUser executes the generated CreateUser query.
 	CreateUser(ctx context.Context, arg *CreateUserParams) (*User, error)
+	// UpdateUserName executes the generated UpdateUserName query.
+	UpdateUserName(ctx context.Context, arg *UpdateUserNameParams) (*User, error)
 }
 
 // Store is the topology-independent generated query API.
@@ -28,6 +30,8 @@ type Store interface {
 	GetAnalysis(ctx context.Context, arg *GetAnalysisParams, storeOptions ...QueryOption) (*Analysis, error)
 	// GetUser executes the generated GetUser query.
 	GetUser(ctx context.Context, arg *GetUserParams, storeOptions ...QueryOption) (*User, error)
+	// UpdateUserName executes the generated UpdateUserName query.
+	UpdateUserName(ctx context.Context, arg *UpdateUserNameParams, storeOptions ...QueryOption) (*User, error)
 }
 
 var _ readQuerier = (*readQueries)(nil)

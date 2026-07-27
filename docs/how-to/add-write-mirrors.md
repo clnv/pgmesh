@@ -82,9 +82,10 @@ Backfill with idempotent inserts or upserts and account for races between the
 copy and live writes. A one-time row count is not enough. Reconcile primary keys
 and relevant values repeatedly until the old and new databases agree.
 
-`sql.ErrNoRows` from a mirror is ignored by default. This allows an update or
-delete to encounter a row that has not been backfilled yet, but it also means a
-successful request is not proof that the target already contains that row.
+`pgx.ErrNoRows` (which matches `sql.ErrNoRows` through `errors.Is`) from a
+mirror is ignored by default. This allows an update or delete to encounter a
+row that has not been backfilled yet, but it also means a successful request is
+not proof that the target already contains that row.
 
 ## 4. Understand failure behavior
 
@@ -94,7 +95,7 @@ For each mirrored generated write:
 2. primary failure stops the operation before the new database runs;
 3. mirrors run sequentially in configured order;
 4. the old primary result is retained;
-5. the first mirror error other than `sql.ErrNoRows` is returned;
+5. the first mirror error other than `ErrNoRows` is returned;
 6. primary success is not rolled back when a mirror fails.
 
 Therefore, dual writes are synchronous but not atomic. A mirror error means the

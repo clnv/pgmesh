@@ -2,7 +2,8 @@ package pgmesh
 
 // ReplicaSet represents one physical shard. Reads are balanced across replica
 // readers, while writes always use the primary writer and its configured
-// synchronous mirrors.
+// synchronous mirrors. ReplicaSet routing is safe for concurrent use when the
+// configured nodes and writer values are safe for concurrent use.
 type ReplicaSet[R any, W Mirrorable[W]] struct {
 	name         string
 	primary      Node[R, W]
@@ -52,7 +53,9 @@ func (s *ReplicaSet[R, W]) primaryWriter() W {
 	return s.primary.Writer()
 }
 
-// WithWriteMirrors returns a copy with writes appended to its synchronous mirrors.
+// WithWriteMirrors returns a copy with writes appended to its synchronous
+// mirrors. It does not mutate the receiver, and Write passes mirrors to the
+// writer in the same order in which they were configured.
 func (s *ReplicaSet[R, W]) WithWriteMirrors(writes ...W) *ReplicaSet[R, W] {
 	mirrors := append([]W(nil), s.writeMirrors...)
 	mirrors = append(mirrors, writes...)

@@ -127,6 +127,9 @@ shards := pgmesh.Shards{
 
 With this modular hasher, shard key `42` selects virtual shard `2` because
 `42 % 8 == 2`. The first mapping then selects replica set `shard-a`.
+Signed keys use Euclidean modulo, so `-1` selects virtual shard `7` when there
+are eight virtual shards. Named integer types are accepted, and even the
+minimum signed value is handled without overflow.
 
 ## What `NewStore` does
 

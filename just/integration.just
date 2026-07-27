@@ -19,7 +19,7 @@ integration-down:
 
 # Run the Docker-backed integration tests.
 integration-test:
-    PGMESH_INTEGRATION=1 go test -race -count=1 -tags=integration -timeout=2m ./integration
+    PGMESH_INTEGRATION=1 go test -p=1 -race -count=1 -tags=integration -timeout=2m ./integration/...
 
 # Run all executable examples against the local topology.
 examples-smoke:

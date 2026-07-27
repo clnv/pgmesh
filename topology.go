@@ -51,7 +51,8 @@ type Options[R any, W Mirrorable[W], SK any] struct {
 	// Shards defines virtual shard placement and write mirrors.
 	Shards Shards
 
-	// CreateNode opens the node identified by a DSN.
+	// CreateNode opens the node identified by a DSN. Nodes and their underlying
+	// pools remain caller-owned; pgmesh does not close them.
 	CreateNode func(context.Context, string) (Node[R, W], error)
 	// ShardHasher maps application shard keys to virtual shard indexes.
 	ShardHasher ShardHasher[SK]
@@ -75,7 +76,10 @@ func VShardRange(from, to uint64) []uint64 {
 	return out
 }
 
-// CreateMesh validates opts, opens its database nodes, and builds an immutable mesh.
+// CreateMesh validates opts, opens its database nodes, and builds an immutable
+// mesh. It calls CreateNode once for each primary and replica, in ReplicaSets
+// order, and stops at the first error. Successfully created nodes are not closed
+// on a later error and remain caller-owned.
 func CreateMesh[R any, W Mirrorable[W], SK any](
 	ctx context.Context,
 	opts *Options[R, W, SK],

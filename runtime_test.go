@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/metric"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -26,6 +27,31 @@ import (
 type fakeWriter struct {
 	name    string
 	mirrors []*fakeWriter
+}
+
+type tenantID int64
+
+type failingMeterProvider struct {
+	metric.MeterProvider
+
+	err error
+}
+
+func (p failingMeterProvider) Meter(string, ...metric.MeterOption) metric.Meter {
+	return failingMeter{err: p.err}
+}
+
+type failingMeter struct {
+	metric.Meter
+
+	err error
+}
+
+func (m failingMeter) Float64Histogram(
+	string,
+	...metric.Float64HistogramOption,
+) (metric.Float64Histogram, error) {
+	return nil, m.err
 }
 
 func (w *fakeWriter) WithMirrors(mirrors ...*fakeWriter) *fakeWriter {
@@ -67,6 +93,30 @@ func TestModularShardHashRejectsZeroVirtualShards(t *testing.T) {
 		"pgmesh: numVShards must not be zero",
 		func() { pgmesh.ModularShardHashFor[uint64](0) },
 	)
+}
+
+func TestModularShardHashSupportsSignedAndNamedKeys(t *testing.T) {
+	t.Parallel()
+
+	hasher := pgmesh.ModularShardHashFor[tenantID](3)
+	tests := []struct {
+		name string
+		key  tenantID
+		want uint64
+	}{
+		{name: "zero", key: 0, want: 0},
+		{name: "positive", key: 5, want: 2},
+		{name: "negative", key: -1, want: 2},
+		{name: "negative wraps", key: -5, want: 1},
+		{name: "minimum int64 does not overflow", key: tenantID(-1 << 63), want: 1},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, test.want, hasher.Hash(test.key))
+		})
+	}
 }
 
 func TestVShardRange(t *testing.T) {
@@ -115,6 +165,33 @@ func TestReplicaSetRoutesReadsAndWrites(t *testing.T) {
 	assert.Equal(t, "mirror1-write", writer.mirrors[1].name)
 	assert.Empty(t, primary.Writer().mirrors, "routing must not mutate the primary node")
 	assert.Equal(t, 2, replicaSet.WriteMirrorCount())
+}
+
+func TestReplicaSetMirrorCopiesAreImmutableAndOrdered(t *testing.T) {
+	t.Parallel()
+
+	base := pgmesh.NewReplicaSet("main", node("primary"), nil)
+	first := base.WithWriteMirrors(node("mirror0").Writer())
+	second := first.WithWriteMirrors(node("mirror1").Writer(), node("mirror2").Writer())
+
+	assert.Zero(t, base.WriteMirrorCount())
+	assert.Equal(t, 1, first.WriteMirrorCount())
+	assert.Equal(t, 3, second.WriteMirrorCount())
+	assert.Empty(t, base.Write().mirrors)
+	assert.Equal(t, []string{"mirror0-write"}, writerNames(first.Write().mirrors))
+	assert.Equal(
+		t,
+		[]string{"mirror0-write", "mirror1-write", "mirror2-write"},
+		writerNames(second.Write().mirrors),
+	)
+}
+
+func writerNames(writers []*fakeWriter) []string {
+	names := make([]string, 0, len(writers))
+	for _, writer := range writers {
+		names = append(names, writer.name)
+	}
+	return names
 }
 
 func TestQueryTelemetryRecordsRoutingAndErrors(t *testing.T) {
@@ -198,6 +275,56 @@ func TestQueryTelemetryRecordsRoutingAndErrors(t *testing.T) {
 	assert.InDelta(t, 1, logRecord["write_mirror_count"], 0)
 	assert.Equal(t, queryErr.Error(), logRecord["error"])
 	assert.Contains(t, logRecord, "duration")
+}
+
+func TestQueryTelemetryRecordsSuccessfulQueries(t *testing.T) {
+	t.Parallel()
+
+	recorder := tracetest.NewSpanRecorder()
+	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { require.NoError(t, tracerProvider.Shutdown(context.Background())) })
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { require.NoError(t, meterProvider.Shutdown(context.Background())) })
+
+	mesh, err := pgmesh.NewBuilder[string, *fakeWriter, uint64](1).
+		WithTracerProvider(tracerProvider).
+		WithMeterProvider(meterProvider).
+		WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).
+		Link(0, pgmesh.NewReplicaSet("main", node("main"), nil)).
+		Build()
+	require.NoError(t, err)
+
+	_, span := mesh.StartSpan(t.Context(), "UserStore", "GetUser", pgmesh.QueryKindRead)
+	span.SetRoute(0, "main", pgmesh.RouteModeRead, 0)
+	span.End(nil)
+
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	assert.Equal(t, codes.Unset, spans[0].Status().Code)
+	assert.Empty(t, spans[0].Events())
+	spanAttributes := attributeMap(spans[0].Attributes())
+	assert.NotContains(t, spanAttributes, attribute.Key("error.type"))
+	assert.Equal(t, "read", spanAttributes[pgmesh.AttributeRouteMode].AsString())
+
+	var metrics metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &metrics))
+	require.Len(t, metrics.ScopeMetrics, 1)
+	require.Len(t, metrics.ScopeMetrics[0].Metrics, 1)
+	data, ok := metrics.ScopeMetrics[0].Metrics[0].Data.(metricdata.Histogram[float64])
+	require.True(t, ok)
+	require.Len(t, data.DataPoints, 1)
+	metricAttributes := attributeMap(data.DataPoints[0].Attributes.ToSlice())
+	assert.NotContains(t, metricAttributes, attribute.Key("error.type"))
+	assert.Equal(t, "read", metricAttributes[pgmesh.AttributeRouteMode].AsString())
+}
+
+func attributeMap(items []attribute.KeyValue) map[attribute.Key]attribute.Value {
+	attributes := make(map[attribute.Key]attribute.Value, len(items))
+	for _, item := range items {
+		attributes[item.Key] = item.Value
+	}
+	return attributes
 }
 
 func assertMetricAttributes(t *testing.T, items []attribute.KeyValue) {
@@ -376,6 +503,35 @@ func TestBuilderValidation(t *testing.T) {
 			assert.ErrorIs(t, err, test.want)
 		})
 	}
+}
+
+func TestBuilderPreservesFirstError(t *testing.T) {
+	t.Parallel()
+
+	meterErr := errors.New("meter initialization failed")
+	builder := pgmesh.NewBuilder[string, *fakeWriter, uint64](1).
+		WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).
+		Link(1, pgmesh.NewReplicaSet("main", node("main"), nil)).
+		WithMeterProvider(failingMeterProvider{err: meterErr}).
+		Link(0, nil)
+
+	_, err := builder.Build()
+	require.ErrorIs(t, err, pgmesh.ErrVShardOutOfRange)
+	assert.NotErrorIs(t, err, meterErr)
+}
+
+func TestBuilderReportsMeterInitializationFailure(t *testing.T) {
+	t.Parallel()
+
+	meterErr := errors.New("meter initialization failed")
+	_, err := pgmesh.NewBuilder[string, *fakeWriter, uint64](1).
+		WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).
+		WithMeterProvider(failingMeterProvider{err: meterErr}).
+		Link(0, pgmesh.NewReplicaSet("main", node("main"), nil)).
+		Build()
+
+	require.ErrorIs(t, err, meterErr)
+	assert.ErrorContains(t, err, "configure OpenTelemetry metrics")
 }
 
 func TestCreateMeshBuildsTopologyAndMirrors(t *testing.T) {
@@ -573,16 +729,47 @@ func TestCreateMeshWrapsFactoryError(t *testing.T) {
 	t.Parallel()
 
 	sentinel := errors.New("connect failed")
-	_, err := pgmesh.CreateMesh(t.Context(), &pgmesh.Options[string, *fakeWriter, uint64]{
-		ReplicaSets: []pgmesh.ReplicaSetSpec{{Name: "main", Primary: pgmesh.Connection{DSN: "primary"}}},
-		Shards: pgmesh.Shards{NumVShards: 1, Mappings: []pgmesh.VShardMapping{{
-			VShards: []uint64{0}, MainReplicaSet: "main",
-		}}},
-		CreateNode: func(context.Context, string) (pgmesh.Node[string, *fakeWriter], error) {
-			return pgmesh.Node[string, *fakeWriter]{}, sentinel
+	tests := []struct {
+		name     string
+		replicas []pgmesh.Connection
+		factory  func(context.Context, string) (pgmesh.Node[string, *fakeWriter], error)
+		want     string
+	}{
+		{
+			name: "primary",
+			factory: func(context.Context, string) (pgmesh.Node[string, *fakeWriter], error) {
+				return pgmesh.Node[string, *fakeWriter]{}, sentinel
+			},
+			want: fmt.Sprintf("primary node for replica set %q", "main"),
 		},
-		ShardHasher: pgmesh.ConstantShardHashFor[uint64](0),
-	})
-	require.ErrorIs(t, err, sentinel)
-	assert.Contains(t, err.Error(), fmt.Sprintf("primary node for replica set %q", "main"))
+		{
+			name:     "replica",
+			replicas: []pgmesh.Connection{{DSN: "replica"}},
+			factory: func(_ context.Context, dsn string) (pgmesh.Node[string, *fakeWriter], error) {
+				if dsn == "primary" {
+					return node("primary"), nil
+				}
+				return pgmesh.Node[string, *fakeWriter]{}, sentinel
+			},
+			want: fmt.Sprintf("replica node for replica set %q", "main"),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := pgmesh.CreateMesh(t.Context(), &pgmesh.Options[string, *fakeWriter, uint64]{
+				ReplicaSets: []pgmesh.ReplicaSetSpec{{
+					Name: "main", Primary: pgmesh.Connection{DSN: "primary"}, Replicas: test.replicas,
+				}},
+				Shards: pgmesh.Shards{NumVShards: 1, Mappings: []pgmesh.VShardMapping{{
+					VShards: []uint64{0}, MainReplicaSet: "main",
+				}}},
+				CreateNode:  test.factory,
+				ShardHasher: pgmesh.ConstantShardHashFor[uint64](0),
+			})
+			require.ErrorIs(t, err, sentinel)
+			assert.ErrorContains(t, err, test.want)
+		})
+	}
 }

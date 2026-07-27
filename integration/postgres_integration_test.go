@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"testing"
@@ -170,7 +171,7 @@ func TestIntegrationDSN(t *testing.T) {
 func (h *postgresHarness) reset(t *testing.T) {
 	t.Helper()
 	for name, pool := range h.pools {
-		_, err := pool.Exec(t.Context(), "TRUNCATE TABLE users")
+		_, err := pool.Exec(t.Context(), "TRUNCATE TABLE analyses, users")
 		require.NoError(t, err, "truncate %s", name)
 	}
 }
@@ -280,6 +281,62 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 				assert.Equal(t, "primary-result", user.Name)
 				assert.Equal(t, "primary-result", h.userName(t, "shard0-primary", 300, 2))
 				assert.Equal(t, "existing", h.userName(t, "shard0-mirror", 300, 2))
+			},
+		},
+		{
+			name: "missing mirror update row is ignored",
+			run: func(t *testing.T, h *postgresHarness) {
+				h.insert(t, "shard0-primary", 350, 2, "before")
+
+				user, err := h.queries.UpdateUserName(
+					t.Context(),
+					&fixture.UpdateUserNameParams{TenantID: 2, ID: 350, Name: "after"},
+				)
+
+				require.NoError(t, err)
+				require.NotNil(t, user)
+				assert.Equal(t, "after", user.Name)
+				assert.Equal(t, "after", h.userName(t, "shard0-primary", 350, 2))
+				h.assertUserAbsent(t, "shard0-mirror", 350, 2)
+			},
+		},
+		{
+			name: "analysis scans nullable network and range types",
+			run: func(t *testing.T, h *postgresHarness) {
+				_, err := h.pools["shard0-primary"].Exec(
+					t.Context(),
+					`INSERT INTO analyses (id, tenant_id, summary, state, source, active_window)
+					 VALUES
+					 (360, 2, 'ready', 'complete', '192.0.2.10', '[2026-01-02 03:04:05+00,2026-01-03 03:04:05+00)'),
+					 (361, 2, NULL, NULL, '2001:db8::10', '[2026-02-02 03:04:05+00,2026-02-03 03:04:05+00)')`,
+				)
+				require.NoError(t, err)
+
+				populated, err := h.queries.GetAnalysis(
+					t.Context(),
+					&fixture.GetAnalysisParams{TenantID: 2, ID: 360},
+					fixture.ReadFromPrimary(),
+				)
+				require.NoError(t, err)
+				require.NotNil(t, populated.Description)
+				assert.Equal(t, "ready", *populated.Description)
+				assert.True(t, populated.State.Valid)
+				assert.Equal(t, fixture.AnalysisStateComplete, populated.State.AnalysisState)
+				assert.Equal(t, netip.MustParseAddr("192.0.2.10"), populated.Source)
+				assert.True(t, populated.ActiveWindow.Valid)
+				assert.Equal(t, "2026-01-02T03:04:05Z", populated.ActiveWindow.Lower.Time.UTC().Format(time.RFC3339))
+				assert.Equal(t, "2026-01-03T03:04:05Z", populated.ActiveWindow.Upper.Time.UTC().Format(time.RFC3339))
+
+				nullable, err := h.queries.GetAnalysis(
+					t.Context(),
+					&fixture.GetAnalysisParams{TenantID: 2, ID: 361},
+					fixture.ReadFromPrimary(),
+				)
+				require.NoError(t, err)
+				assert.Nil(t, nullable.Description)
+				assert.False(t, nullable.State.Valid)
+				assert.Equal(t, netip.MustParseAddr("2001:db8::10"), nullable.Source)
+				assert.True(t, nullable.ActiveWindow.Valid)
 			},
 		},
 		{

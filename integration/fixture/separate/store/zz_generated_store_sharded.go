@@ -14,20 +14,30 @@ import (
 
 // ShardDatabaseConfig configures one primary and its read replicas.
 type ShardDatabaseConfig struct {
-	Name     string
-	Primary  db.DBTX
+	// Name uniquely identifies the physical replica set.
+	Name string
+	// Primary serves writes and primary reads. The caller owns its lifecycle.
+	Primary db.DBTX
+	// Replicas serve ordinary reads in round-robin order. The caller owns their lifecycles.
 	Replicas []db.DBTX
 }
 
 // ShardedConfig configures shard routing behind the generated Store API.
 type ShardedConfig[SK any] struct {
-	ReplicaSets    []ShardDatabaseConfig
-	Shards         pgmesh.Shards
-	ShardHasher    pgmesh.ShardHasher[SK]
-	Resolver       ShardResolver[SK]
+	// ReplicaSets define the physical database nodes in the topology.
+	ReplicaSets []ShardDatabaseConfig
+	// Shards maps every virtual shard to a primary replica set and ordered mirrors.
+	Shards pgmesh.Shards
+	// ShardHasher maps resolved shard keys to virtual shard indexes.
+	ShardHasher pgmesh.ShardHasher[SK]
+	// Resolver extracts application shard keys from generated query parameters.
+	Resolver ShardResolver[SK]
+	// TracerProvider records routed query spans; nil uses the global provider.
 	TracerProvider trace.TracerProvider
-	MeterProvider  metric.MeterProvider
-	Logger         *slog.Logger
+	// MeterProvider records routed query metrics; nil uses the global provider.
+	MeterProvider metric.MeterProvider
+	// Logger receives routed query debug logs; nil disables logging.
+	Logger *slog.Logger
 }
 
 type shardedStoreConfig[SK any] struct{ config ShardedConfig[SK] }

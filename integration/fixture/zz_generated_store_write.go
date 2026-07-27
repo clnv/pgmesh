@@ -63,3 +63,17 @@ func (q *writeQueries) CreateUser(ctx context.Context, arg *CreateUserParams) (*
 	})
 	return rv0, mirrorErr
 }
+
+// UpdateUserName executes the generated UpdateUserName query.
+func (q *writeQueries) UpdateUserName(ctx context.Context, arg *UpdateUserNameParams) (*User, error) {
+	rv0, err := q.main.UpdateUserName(ctx, arg)
+	if err != nil {
+		var zero0 *User
+		return zero0, err
+	}
+	mirrorErr := q.mirror(func(mirror *Queries) error {
+		_, err := mirror.UpdateUserName(ctx, arg)
+		return err
+	})
+	return rv0, mirrorErr
+}

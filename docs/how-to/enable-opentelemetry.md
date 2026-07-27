@@ -31,7 +31,10 @@ store, err := db.NewStore(ctx, db.Database(db.DatabaseConfig{
 pgmesh uses OpenTelemetry's global providers, so applications that call
 `otel.SetTracerProvider` and
 `otel.SetMeterProvider` need no pgmesh-specific options. When no SDK is
-configured, OpenTelemetry's default providers are no-ops.
+configured, OpenTelemetry's default providers are no-ops. The application owns
+provider lifecycle: build providers before the store, keep them alive while
+queries run, then flush or shut them down after query traffic has stopped.
+pgmesh never shuts down a provider.
 
 pgmesh emits one metric instrument:
 

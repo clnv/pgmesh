@@ -84,13 +84,20 @@ type StoreConfig interface {
 
 // DatabaseConfig configures a single primary, optional read replicas, and optional write mirrors.
 type DatabaseConfig struct {
-	Name           string
-	Primary        db.DBTX
-	Replicas       []db.DBTX
-	Mirrors        []db.DBTX
+	// Name identifies the database in telemetry; empty defaults to "default".
+	Name string
+	// Primary serves writes and explicit primary reads. The caller owns its lifecycle.
+	Primary db.DBTX
+	// Replicas serve ordinary reads in round-robin order. The caller owns their lifecycles.
+	Replicas []db.DBTX
+	// Mirrors synchronously receive writes in slice order after the primary succeeds.
+	Mirrors []db.DBTX
+	// TracerProvider records routed query spans; nil uses the global provider.
 	TracerProvider trace.TracerProvider
-	MeterProvider  metric.MeterProvider
-	Logger         *slog.Logger
+	// MeterProvider records routed query metrics; nil uses the global provider.
+	MeterProvider metric.MeterProvider
+	// Logger receives routed query debug logs; nil disables logging.
+	Logger *slog.Logger
 }
 
 type databaseStoreConfig struct{ config DatabaseConfig }
@@ -261,4 +268,38 @@ func (q *meshStore[SK]) GetUser(ctx context.Context, arg *db.GetUserParams, stor
 	// Ordinary reads use the shard's replica route.
 	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
 	return shard.Read().GetUser(ctx, arg)
+}
+
+// UpdateUserName executes the generated query on its target shard.
+func (q *meshStore[SK]) UpdateUserName(ctx context.Context, arg *db.UpdateUserNameParams, storeOptions ...QueryOption) (result *db.User, err error) {
+	// Trace the query and record its returned error.
+	ctx, querySpan := q.mesh.StartSpan(ctx, "Store", "UpdateUserName", pgmesh.QueryKindWrite)
+	defer func() { querySpan.End(err) }()
+
+	// Resolve the shard key for this topology.
+	var shardKey SK
+	if q.resolver != nil {
+		shardKey = q.resolver.Tenant(arg.TenantID)
+	}
+	shard, err := q.mesh.Shard(shardKey)
+	if err != nil {
+		return result, err
+	}
+
+	// Apply options that can override the default route.
+	options := applyQueryOptions(storeOptions...)
+
+	// Select the primary write route, or the transaction when provided.
+	target := shard.Write()
+	mode := pgmesh.RouteModePrimary
+	writeMirrorCount := shard.WriteMirrorCount()
+	if options.tx != nil {
+		target = target.WithTx(options.tx)
+		mode = pgmesh.RouteModeTransaction
+		writeMirrorCount = 0
+	}
+
+	// Execute the write after recording its resolved route.
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)
+	return target.UpdateUserName(ctx, arg)
 }

@@ -76,3 +76,25 @@ func (q *Queries) GetUser(ctx context.Context, arg *GetUserParams) (*User, error
 	err := row.Scan(&i.ID, &i.TenantID, &i.Name)
 	return &i, err
 }
+
+const updateUserName = `-- name: UpdateUserName :one
+UPDATE users
+SET name = $3
+WHERE tenant_id = $1 AND id = $2
+RETURNING id, tenant_id, name
+`
+
+type UpdateUserNameParams struct {
+	TenantID int64
+	ID       int64
+	Name     string
+}
+
+// kind: write
+// shard: tenant(tenant_id)
+func (q *Queries) UpdateUserName(ctx context.Context, arg *UpdateUserNameParams) (*User, error) {
+	row := q.db.QueryRow(ctx, updateUserName, arg.TenantID, arg.ID, arg.Name)
+	var i User
+	err := row.Scan(&i.ID, &i.TenantID, &i.Name)
+	return &i, err
+}

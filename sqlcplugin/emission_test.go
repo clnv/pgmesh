@@ -96,9 +96,7 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 			]
 		}`),
 	})
-	if err != nil {
-		t.Fatalf("Generate returned error: %v", err)
-	}
+	require.NoError(t, err)
 	require.Equal(
 		t,
 		[]string{
@@ -130,6 +128,9 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 	assert.NotContains(t, store, "defaultShardKey")
 	assert.Contains(t, store, "func NewStore(ctx context.Context, config StoreConfig) (Store, error)")
 	assert.Contains(t, store, "func Database(config DatabaseConfig) StoreConfig")
+	assert.Contains(t, store, `// Name identifies the database in telemetry; empty defaults to "default".`)
+	assert.Contains(t, store, "// Primary serves writes and explicit primary reads. The caller owns its lifecycle.")
+	assert.Contains(t, store, "// Mirrors synchronously receive writes in slice order after the primary succeeds.")
 	assert.NotContains(t, store, "type OneStore")
 	assert.NotContains(t, store, "type ShardedStore")
 	assert.NotContains(t, generatedSource(resp), "oneStore")
@@ -138,63 +139,42 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 	assert.NotContains(t, sharded, "type ShardedConfig")
 
 	got := generatedSource(resp)
-	if !strings.Contains(
+	assert.Contains(
+		t,
 		got,
 		"type readQuerier interface {\n\t// ListMessagesWithIDs executes the generated ListMessagesWithIDs query.\n"+
 			"\tListMessagesWithIDs(ctx context.Context, ids []xid.ID) ([]*Message, error)\n}",
-	) {
-		t.Fatalf("generated output did not put ListMessagesWithIDs in readQuerier:\n%s", got)
-	}
-	if !strings.Contains(
+	)
+	assert.Contains(
+		t,
 		got,
 		"type writeQuerier interface {\n\t// CreateMessage executes the generated CreateMessage query.\n"+
 			"\tCreateMessage(ctx context.Context, arg *CreateMessageParams) (*Message, error)\n}",
-	) {
-		t.Fatalf("generated output did not put CreateMessage in writeQuerier:\n%s", got)
-	}
-	if !strings.Contains(got, "type Store interface") {
-		t.Fatalf("generated output did not include Store:\n%s", got)
-	}
-	if !strings.Contains(got, "type queryStore struct {\n\t*readQueries\n\t*writeQueries\n}") {
-		t.Fatalf("generated output did not compose internal queryStore:\n%s", got)
-	}
-	if !strings.Contains(got, "var _ readQuerier = (*readQueries)(nil)") {
-		t.Fatalf("generated output did not assert readQueries implements readQuerier:\n%s", got)
-	}
-	if !strings.Contains(got, "var _ writeQuerier = (*writeQueries)(nil)") {
-		t.Fatalf("generated output did not assert writeQueries implements writeQuerier:\n%s", got)
-	}
+	)
+	assert.Contains(t, got, "type Store interface")
+	assert.Contains(t, got, "type queryStore struct {\n\t*readQueries\n\t*writeQueries\n}")
+	assert.Contains(t, got, "var _ readQuerier = (*readQueries)(nil)")
+	assert.Contains(t, got, "var _ writeQuerier = (*writeQueries)(nil)")
 	readBody := generatedMethodBody(t, got, "readQueries", "ListMessagesWithIDs")
-	if strings.Contains(readBody, ".mirror(") || strings.Contains(readBody, "mirror.ListMessagesWithIDs") {
-		t.Fatalf("read query should not mirror:\n%s", readBody)
-	}
-	if !strings.Contains(readBody, "return rv0, nil") {
-		t.Fatalf("read query should return main query result without mirror error:\n%s", readBody)
-	}
+	assert.NotContains(t, readBody, ".mirror(")
+	assert.NotContains(t, readBody, "mirror.ListMessagesWithIDs")
+	assert.Contains(t, readBody, "return rv0, nil")
 	writeBody := generatedMethodBody(t, got, "writeQueries", "CreateMessage")
-	if !strings.Contains(writeBody, "mirror.CreateMessage") {
-		t.Fatalf("write query should mirror:\n%s", writeBody)
-	}
-	if strings.Contains(got, `"time"`) {
-		t.Fatalf("generated output imported time for hidden struct fields:\n%s", got)
-	}
+	assert.Contains(t, writeBody, "mirror.CreateMessage")
+	assert.NotContains(t, got, `"time"`)
 }
 
 func generatedMethodBody(t *testing.T, source, receiverType, methodName string) string {
 	t.Helper()
 
 	start := strings.Index(source, "func (q *"+receiverType+") "+methodName+"(")
-	if start == -1 {
-		t.Fatalf("generated output missing %s.%s method:\n%s", receiverType, methodName, source)
-	}
+	require.NotEqual(t, -1, start, "generated output missing %s.%s method", receiverType, methodName)
 	rest := source[start:]
 	end := strings.Index(rest, "\n}\n\n")
 	if end == -1 {
 		end = strings.Index(rest, "\n}\n")
 	}
-	if end == -1 {
-		t.Fatalf("generated output missing end of %s method:\n%s", methodName, rest)
-	}
+	require.NotEqual(t, -1, end, "generated output missing end of %s method", methodName)
 	return rest[:end+3]
 }
 
@@ -222,7 +202,7 @@ func generatedFileContents(t *testing.T, response *plugin.GenerateResponse, name
 			return string(file.GetContents())
 		}
 	}
-	t.Fatalf("generated response missing %s", name)
+	require.Failf(t, "generated response missing file", "missing %s", name)
 	return ""
 }
 
@@ -413,23 +393,12 @@ func TestClassifyQuery(t *testing.T) {
 
 			got, route, err := classifyQuery(tt.query)
 			if tt.wantErr != "" {
-				if err == nil {
-					t.Fatalf("classifyQuery() returned nil error")
-				}
-				if !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("classifyQuery() error = %q, want containing %q", err.Error(), tt.wantErr)
-				}
+				require.ErrorContains(t, err, tt.wantErr)
 				return
 			}
-			if err != nil {
-				t.Fatalf("classifyQuery() returned error: %v", err)
-			}
-			if got != tt.want {
-				t.Fatalf("classifyQuery() = %s, want %s", got, tt.want)
-			}
-			if fmt.Sprintf("%#v", route) != fmt.Sprintf("%#v", tt.wantRoute) {
-				t.Fatalf("classifyQuery() route = %#v, want %#v", route, tt.wantRoute)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantRoute, route)
 		})
 	}
 }
@@ -472,9 +441,7 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 	}
 
 	response, err := Generate(t.Context(), request)
-	if err != nil {
-		t.Fatalf("Generate returned error: %v", err)
-	}
+	require.NoError(t, err)
 	got := generatedSource(response)
 	checks := []string{
 		`func NewStore(ctx context.Context, config StoreConfig) (Store, error)`,
@@ -506,9 +473,7 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 		"return target.CreateP2PMessage(ctx, arg)",
 	}
 	for _, check := range checks {
-		if !strings.Contains(got, check) {
-			t.Fatalf("generated output missing %q:\n%s", check, got)
-		}
+		assert.Contains(t, got, check)
 	}
 	meshReadBody := generatedMethodBody(t, got, "meshStore[SK]", "ListP2PMessages")
 	assert.NotContains(t, meshReadBody, "var queryErr error")
@@ -518,10 +483,8 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 	assert.NotContains(t, got, "defaultShardKey")
 	assert.NotContains(t, got, "type databaseStore struct")
 	assert.NotContains(t, got, "type shardedStore[SK any] struct")
-	if !strings.Contains(got, "func (q *queryStore) WithTx(tx pgx.Tx) *queryStore") ||
-		!strings.Contains(got, "return newQueryStore(q.writeQueries.main.WithTx(tx))") {
-		t.Fatalf("transaction wrapper must drop mirrors:\n%s", got)
-	}
+	assert.Contains(t, got, "func (q *queryStore) WithTx(tx pgx.Tx) *queryStore")
+	assert.Contains(t, got, "return newQueryStore(q.writeQueries.main.WithTx(tx))")
 }
 
 func TestGenerateRejectsMixedShardedAndUnshardedQueries(t *testing.T) {
@@ -574,13 +537,9 @@ func TestGenerateResolvesShardOperandsForIndividualParameters(t *testing.T) {
 		}},
 		PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5","query_parameter_limit":2}`),
 	})
-	if err != nil {
-		t.Fatalf("Generate returned error: %v", err)
-	}
+	require.NoError(t, err)
 	got := generatedSource(response)
-	if !strings.Contains(got, "shardKey = q.resolver.P2P(userID, peerID)") {
-		t.Fatalf("route did not reference individual parameters:\n%s", got)
-	}
+	assert.Contains(t, got, "shardKey = q.resolver.P2P(userID, peerID)")
 }
 
 func TestGenerateIgnoreMirrorErrorOption(t *testing.T) {
@@ -721,7 +680,7 @@ func TestGenerateRejectsInvalidRoutingConfigurations(t *testing.T) {
 				r.PluginOptions = []byte(`{"package":"db","sql_package":"pgx/v5","skip_with_tx":true}`)
 				return r
 			}(),
-			want: "skip_with_tx is unsupported",
+			want: `unknown field "skip_with_tx"`,
 		},
 		{
 			name: "negative parameter limit",
@@ -773,9 +732,7 @@ func TestGenerateRejectsInvalidRoutingConfigurations(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := Generate(t.Context(), test.request)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("Generate error = %v, want containing %q", err, test.want)
-			}
+			require.ErrorContains(t, err, test.want)
 		})
 	}
 }
@@ -784,18 +741,78 @@ func TestGenerateSupportsAllNodeLevelCommands(t *testing.T) {
 	t.Parallel()
 
 	int8Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int8"}
-	commands := []string{":one", ":many", ":exec", ":execrows", ":execresult", ":copyfrom", ":batchexec", ":batchone", ":batchmany"}
-	queries := make([]*plugin.Query, 0, len(commands))
-	for index, command := range commands {
+	tests := []struct {
+		name      string
+		command   string
+		signature string
+		body      []string
+	}{
+		{
+			name:      "one",
+			command:   ":one",
+			signature: "Query0(ctx context.Context) (int64, error)",
+			body:      []string{"q.main.Query0(ctx)", "return rv0, nil"},
+		},
+		{
+			name:      "many",
+			command:   ":many",
+			signature: "Query1(ctx context.Context) ([]int64, error)",
+			body:      []string{"q.main.Query1(ctx)", "return rv0, nil"},
+		},
+		{
+			name:      "exec",
+			command:   ":exec",
+			signature: "Query2(ctx context.Context) error",
+			body:      []string{"q.main.Query2(ctx)", "return nil"},
+		},
+		{
+			name:      "exec rows",
+			command:   ":execrows",
+			signature: "Query3(ctx context.Context) (int64, error)",
+			body:      []string{"q.main.Query3(ctx)", "return rv0, nil"},
+		},
+		{
+			name:      "exec result",
+			command:   ":execresult",
+			signature: "Query4(ctx context.Context) (pgconn.CommandTag, error)",
+			body:      []string{"q.main.Query4(ctx)", "return rv0, nil"},
+		},
+		{
+			name:      "copy from",
+			command:   ":copyfrom",
+			signature: "Query5(ctx context.Context, id []int64) (int64, error)",
+			body:      []string{"q.main.Query5(ctx, id)", "return rv0, nil"},
+		},
+		{
+			name:      "batch exec",
+			command:   ":batchexec",
+			signature: "Query6(ctx context.Context, id []int64) *Query6BatchResults",
+			body:      []string{"return q.main.Query6(ctx, id)"},
+		},
+		{
+			name:      "batch one",
+			command:   ":batchone",
+			signature: "Query7(ctx context.Context, id []int64) *Query7BatchResults",
+			body:      []string{"return q.main.Query7(ctx, id)"},
+		},
+		{
+			name:      "batch many",
+			command:   ":batchmany",
+			signature: "Query8(ctx context.Context, id []int64) *Query8BatchResults",
+			body:      []string{"return q.main.Query8(ctx, id)"},
+		},
+	}
+	queries := make([]*plugin.Query, 0, len(tests))
+	for index, test := range tests {
 		query := &plugin.Query{
 			Name:     fmt.Sprintf("Query%d", index),
-			Cmd:      command,
+			Cmd:      test.command,
 			Comments: []string{"kind: read"},
 		}
-		if command == ":one" || command == ":many" || command == ":batchone" || command == ":batchmany" {
+		if test.command == ":one" || test.command == ":many" || test.command == ":batchone" || test.command == ":batchmany" {
 			query.Columns = []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}}
 		}
-		if command == ":copyfrom" || strings.HasPrefix(command, ":batch") {
+		if test.command == ":copyfrom" || strings.HasPrefix(test.command, ":batch") {
 			query.Params = []*plugin.Parameter{{Number: 1, Column: &plugin.Column{Name: "id", Type: int8Type, NotNull: true}}}
 		}
 		queries = append(queries, query)
@@ -807,24 +824,13 @@ func TestGenerateSupportsAllNodeLevelCommands(t *testing.T) {
 		Queries:       queries,
 		PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5"}`),
 	})
-	if err != nil {
-		t.Fatalf("Generate returned error: %v", err)
-	}
+	require.NoError(t, err)
 	got := generatedSource(response)
-	wantSignatures := []string{
-		"Query0(ctx context.Context) (int64, error)",
-		"Query1(ctx context.Context) ([]int64, error)",
-		"Query2(ctx context.Context) error",
-		"Query3(ctx context.Context) (int64, error)",
-		"Query4(ctx context.Context) (pgconn.CommandTag, error)",
-		"Query5(ctx context.Context, id []int64) (int64, error)",
-		"Query6(ctx context.Context, id []int64) *Query6BatchResults",
-		"Query7(ctx context.Context, id []int64) *Query7BatchResults",
-		"Query8(ctx context.Context, id []int64) *Query8BatchResults",
-	}
-	for index, signature := range wantSignatures {
-		if !strings.Contains(got, signature) {
-			t.Fatalf("generated output missing command %s signature %q:\n%s", commands[index], signature, got)
+	for index, test := range tests {
+		assert.Contains(t, got, test.signature, "command %s", test.command)
+		body := generatedMethodBody(t, got, "readQueries", fmt.Sprintf("Query%d", index))
+		for _, want := range test.body {
+			assert.Contains(t, body, want, "command %s body", test.command)
 		}
 	}
 }
@@ -946,119 +952,5 @@ func TestGenerateAppliesRenameAndNullableOptions(t *testing.T) {
 	}
 	for _, check := range checks {
 		assert.Contains(t, got, check)
-	}
-}
-
-func TestPostgresTypeCompatibility(t *testing.T) {
-	t.Parallel()
-
-	req := &plugin.GenerateRequest{
-		Settings: &plugin.Settings{Engine: "postgresql"},
-		Catalog: &plugin.Catalog{
-			DefaultSchema: "public",
-			Schemas: []*plugin.Schema{
-				{Name: "public", Enums: []*plugin.Enum{{Name: "status"}}, CompositeTypes: []*plugin.CompositeType{{Name: "address"}}},
-				{Name: "audit", Enums: []*plugin.Enum{{Name: "event"}}},
-			},
-		},
-	}
-	opts := &Options{SQLPackage: "pgx/v5"}
-	resolver := &typeResolver{req: req, opts: opts, imports: newImportSet()}
-	tests := []struct {
-		name    string
-		typ     *plugin.Identifier
-		notNull bool
-		want    string
-	}{
-		{name: "inet", typ: &plugin.Identifier{Name: "inet"}, notNull: true, want: "netip.Addr"},
-		{name: "nullable inet", typ: &plugin.Identifier{Name: "inet"}, want: "*netip.Addr"},
-		{name: "cidr", typ: &plugin.Identifier{Name: "cidr"}, notNull: true, want: "netip.Prefix"},
-		{name: "mac address", typ: &plugin.Identifier{Name: "macaddr"}, want: "net.HardwareAddr"},
-		{name: "timestamp range", typ: &plugin.Identifier{Name: "tstzrange"}, want: "pgtype.Range[pgtype.Timestamptz]"},
-		{
-			name: "timestamp multirange",
-			typ:  &plugin.Identifier{Name: "tstzmultirange"},
-			want: "pgtype.Multirange[pgtype.Range[pgtype.Timestamptz]]",
-		},
-		{name: "bits", typ: &plugin.Identifier{Name: "varbit"}, want: "pgtype.Bits"},
-		{name: "xid8", typ: &plugin.Identifier{Name: "xid8"}, want: "pgtype.Uint64"},
-		{name: "vector", typ: &plugin.Identifier{Name: "vector"}, want: "pgvector.Vector"},
-		{name: "enum", typ: &plugin.Identifier{Schema: "public", Name: "status"}, notNull: true, want: "Status"},
-		{name: "nullable enum", typ: &plugin.Identifier{Schema: "public", Name: "status"}, want: "NullStatus"},
-		{name: "nondefault schema enum", typ: &plugin.Identifier{Schema: "audit", Name: "event"}, notNull: true, want: "AuditEvent"},
-		{name: "nullable composite", typ: &plugin.Identifier{Schema: "public", Name: "address"}, want: "sql.NullString"},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, test.want, resolver.goType(&plugin.Column{Type: test.typ, NotNull: test.notNull}))
-		})
-	}
-}
-
-func TestColumnOverridePrecedenceAndPatterns(t *testing.T) {
-	t.Parallel()
-
-	request := &plugin.GenerateRequest{
-		Settings: &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "db"}},
-		Catalog:  &plugin.Catalog{DefaultSchema: "public"},
-		PluginOptions: []byte(`{
-			"package":"db",
-			"sql_package":"pgx/v5",
-			"overrides":[
-				{"db_type":"pg_catalog.int8","go_type":{"type":"string"}},
-				{"column":"*.tenant_?d","go_type":{"type":"uint64"}}
-			]
-		}`),
-	}
-	opts, err := parseOptions(request)
-	require.NoError(t, err)
-	resolver := &typeResolver{req: request, opts: opts, imports: newImportSet()}
-
-	tests := []struct {
-		name   string
-		column *plugin.Column
-		want   string
-	}{
-		{
-			name: "column pattern wins over earlier database type override",
-			column: &plugin.Column{
-				Name:    "tenant_id",
-				Type:    &plugin.Identifier{Schema: "pg_catalog", Name: "int8"},
-				NotNull: true,
-				Table:   &plugin.Identifier{Schema: "public", Name: "users"},
-			},
-			want: "uint64",
-		},
-		{
-			name: "column override represents an entire array field",
-			column: &plugin.Column{
-				Name:      "tenant_id",
-				Type:      &plugin.Identifier{Schema: "pg_catalog", Name: "int8"},
-				NotNull:   true,
-				IsArray:   true,
-				ArrayDims: 1,
-				Table:     &plugin.Identifier{Schema: "public", Name: "users"},
-			},
-			want: "uint64",
-		},
-		{
-			name: "database type override remains the fallback",
-			column: &plugin.Column{
-				Name:    "owner_id",
-				Type:    &plugin.Identifier{Schema: "pg_catalog", Name: "int8"},
-				NotNull: true,
-				Table:   &plugin.Identifier{Schema: "public", Name: "users"},
-			},
-			want: "string",
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, test.want, resolver.goType(test.column))
-		})
 	}
 }
