@@ -58,7 +58,7 @@ flowchart TD
     key["Logical shard key"]
     hash["ShardHasher.Hash(key)"]
     vshard["Virtual-shard index"]
-    mapping["VShardMapping selects<br/>MainReplicaSet"]
+    mapping["WithVShardMapping selects<br/>main replica set"]
     kind{"Operation"}
     read["Next read replica<br/>round-robin; primary if none"]
     primaryRead["Main primary"]
@@ -85,14 +85,14 @@ primary write.
 | Term | Meaning |
 | --- | --- |
 | Shard key | A stable application value, such as a tenant ID, used for routing. |
-| `ShardHasher` | Maps a shard key to one virtual-shard index in `[0, NumVShards)`. |
+| `ShardHasher` | Maps a shard key to one virtual-shard index in `[0, numVShards)`. |
 | Virtual shard | A logical bucket in the mesh routing table. It is not a PostgreSQL endpoint. |
-| `Shards` | The configuration containing the virtual-shard count and all placement mappings. Despite the name, it does not contain database connections. |
-| `VShardMapping` | Assigns one or more virtual-shard indexes to a main replica set and optional write mirrors. |
-| `ShardDatabaseConfig` | Generated configuration for one named primary and zero or more read replicas. |
+| `Sharded` | Generated topology constructor that receives the virtual-shard count, hasher, resolver, and sharded options. |
+| `WithVShardMapping` | Generated functional option assigning virtual-shard indexes to a main replica set and optional write mirrors. |
+| `WithReplicaSet` | Generated functional option registering one named primary and zero or more read replicas. |
 | Replica set | The internal representation of one physical shard: one primary plus its read replicas. |
-| `MainReplicaSet` | The active replica set that serves reads and primary writes for a mapping. |
-| `MirrorReplicaSets` | Replica sets whose primaries receive synchronous copies of writes. They do not serve reads for that mapping. |
+| Main replica set | The active replica set that serves reads and primary writes for a mapping. |
+| Mirror replica sets | Replica sets whose primaries receive synchronous copies of writes. They do not serve reads for that mapping. |
 | Mesh | The private validated table that routes every virtual shard to a replica set. |
 
 Two distinctions prevent most terminology mix-ups:
@@ -108,21 +108,15 @@ Two distinctions prevent most terminology mix-ups:
 ```go
 const numVShards = 8
 
-hasher := pgmesh.ModularShardHashFor[uint64](numVShards)
-
-shards := pgmesh.Shards{
-    NumVShards: numVShards,
-    Mappings: []pgmesh.VShardMapping{
-        {
-            VShards:        pgmesh.VShardRange(0, 4),
-            MainReplicaSet: "shard-a",
-        },
-        {
-            VShards:        pgmesh.VShardRange(4, 8),
-            MainReplicaSet: "shard-b",
-        },
-    },
-}
+topology := db.Sharded(
+    numVShards,
+    pgmesh.ModularShardHashFor[uint64](numVShards),
+    tenantResolver{},
+    db.WithReplicaSet("shard-a", shardAPrimary),
+    db.WithReplicaSet("shard-b", shardBPrimary),
+    db.WithVShardMapping("shard-a", pgmesh.VShardRange(0, 4)),
+    db.WithVShardMapping("shard-b", pgmesh.VShardRange(4, 8)),
+)
 ```
 
 With this modular hasher, shard key `42` selects virtual shard `2` because
@@ -133,8 +127,8 @@ minimum signed value is handled without overflow.
 
 ## What `NewStore` does
 
-`NewStore(ctx, config)` turns the opaque generated configuration into the
-private runtime objects used on every request:
+`NewStore(ctx, topology, options...)` turns the opaque generated topology into
+the private runtime objects used on every request:
 
 1. Validate replica-set names, databases, mirror references, and complete
    virtual-shard coverage.

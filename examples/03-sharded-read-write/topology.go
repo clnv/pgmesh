@@ -48,47 +48,26 @@ func newAccountQueries(
 	if err != nil {
 		return nil, err
 	}
-	store, err := sharded.NewStore(ctx, sharded.Sharded(sharded.ShardedConfig[uint64]{
-		ReplicaSets: []sharded.ShardDatabaseConfig{
-			{
-				Name:     "shard-0",
-				Primary:  shard0Primary,
-				Replicas: []sharded.DBTX{shard0Replica},
-			},
-			{
-				Name:     "shard-1",
-				Primary:  shard1Primary,
-				Replicas: []sharded.DBTX{shard1Replica},
-			},
-		},
-		Shards: pgmesh.Shards{
-			NumVShards: numVShards,
-			Mappings: []pgmesh.VShardMapping{
-				{
-					VShards:           pgmesh.VShardRange(0, 64),
-					MainReplicaSet:    "shard-0",
-					MirrorReplicaSets: nil,
-				},
-				{
-					VShards:           pgmesh.VShardRange(64, numVShards),
-					MainReplicaSet:    "shard-1",
-					MirrorReplicaSets: nil,
-				},
-			},
-		},
-		ShardHasher:    pgmesh.ModularShardHashFor[uint64](numVShards),
-		Resolver:       tenantResolver{},
-		TracerProvider: nil,
-		MeterProvider:  nil,
-		Logger: slog.New(slog.NewTextHandler(
+	store, err := sharded.NewStore(
+		ctx,
+		sharded.Sharded(
+			numVShards,
+			pgmesh.ModularShardHashFor[uint64](numVShards),
+			tenantResolver{},
+			sharded.WithReplicaSet("shard-0", shard0Primary, shard0Replica),
+			sharded.WithReplicaSet("shard-1", shard1Primary, shard1Replica),
+			sharded.WithVShardMapping("shard-0", pgmesh.VShardRange(0, 64)),
+			sharded.WithVShardMapping("shard-1", pgmesh.VShardRange(64, numVShards)),
+		),
+		sharded.WithLogger(slog.New(slog.NewTextHandler(
 			os.Stderr,
 			&slog.HandlerOptions{
 				AddSource:   false,
 				Level:       slog.LevelDebug,
 				ReplaceAttr: nil,
 			},
-		)),
-	}))
+		))),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("create account store: %w", err)
 	}
@@ -104,13 +83,8 @@ func newSettingsStore(
 	if err != nil {
 		return nil, err
 	}
-	return one.NewStore(ctx, one.Database(one.DatabaseConfig{
-		Name:           "settings",
-		Primary:        pool,
-		Replicas:       nil,
-		Mirrors:        nil,
-		TracerProvider: nil,
-		MeterProvider:  nil,
-		Logger:         nil,
-	}))
+	return one.NewStore(
+		ctx,
+		one.Singleton(pool, one.WithDatabaseName("settings")),
+	)
 }

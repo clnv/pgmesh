@@ -538,24 +538,19 @@ func TestCreateMeshBuildsTopologyAndMirrors(t *testing.T) {
 	t.Parallel()
 
 	created := make([]string, 0)
-	mesh, err := pgmesh.CreateMesh(t.Context(), &pgmesh.Options[string, *fakeWriter, uint64]{
-		ReplicaSets: []pgmesh.ReplicaSetSpec{
-			{Name: "a", Primary: pgmesh.Connection{DSN: "a-primary"}, Replicas: []pgmesh.Connection{{DSN: "a-replica"}}},
-			{Name: "b", Primary: pgmesh.Connection{DSN: "b-primary"}},
-		},
-		Shards: pgmesh.Shards{
-			NumVShards: 2,
-			Mappings: []pgmesh.VShardMapping{
-				{VShards: []uint64{0}, MainReplicaSet: "a", MirrorReplicaSets: []string{"b"}},
-				{VShards: []uint64{1}, MainReplicaSet: "b"},
-			},
-		},
-		CreateNode: func(_ context.Context, dsn string) (pgmesh.Node[string, *fakeWriter], error) {
+	mesh, err := pgmesh.CreateMesh(
+		t.Context(),
+		2,
+		func(_ context.Context, dsn string) (pgmesh.Node[string, *fakeWriter], error) {
 			created = append(created, dsn)
 			return node(dsn), nil
 		},
-		ShardHasher: pgmesh.ModularShardHashFor[uint64](2),
-	})
+		pgmesh.ModularShardHashFor[uint64](2),
+		pgmesh.WithReplicaSet("a", "a-primary", "a-replica"),
+		pgmesh.WithReplicaSet("b", "b-primary"),
+		pgmesh.WithVShardMapping("a", []uint64{0}, "b"),
+		pgmesh.WithVShardMapping("b", []uint64{1}),
+	)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"a-primary", "a-replica", "b-primary"}, created)
 
@@ -567,147 +562,190 @@ func TestCreateMeshBuildsTopologyAndMirrors(t *testing.T) {
 	assert.Equal(t, "b-primary-write", writer.mirrors[0].name)
 }
 
+func TestMeshOptionsCloneInputs(t *testing.T) {
+	t.Parallel()
+
+	replicaDSNs := []string{"replica"}
+	vshards := []uint64{0}
+	mirrors := []string{"mirror"}
+	replicaSetOption := pgmesh.WithReplicaSet("main", "primary", replicaDSNs...)
+	mappingOption := pgmesh.WithVShardMapping("main", vshards, mirrors...)
+
+	replicaDSNs[0] = ""
+	vshards[0] = 1
+	mirrors[0] = "missing"
+
+	created := make([]string, 0)
+	_, err := pgmesh.CreateMesh(
+		t.Context(),
+		1,
+		func(_ context.Context, dsn string) (pgmesh.Node[string, *fakeWriter], error) {
+			created = append(created, dsn)
+			return node(dsn), nil
+		},
+		pgmesh.ConstantShardHashFor[uint64](0),
+		replicaSetOption,
+		pgmesh.WithReplicaSet("mirror", "mirror-primary"),
+		mappingOption,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"primary", "replica", "mirror-primary"}, created)
+}
+
 func TestCreateMeshValidation(t *testing.T) {
 	t.Parallel()
-	_, err := pgmesh.CreateMesh[string, *fakeWriter, uint64](t.Context(), nil)
-	require.ErrorIs(t, err, pgmesh.ErrNoReplicaSets)
 
-	valid := func() *pgmesh.Options[string, *fakeWriter, uint64] {
-		return &pgmesh.Options[string, *fakeWriter, uint64]{
-			ReplicaSets: []pgmesh.ReplicaSetSpec{{
-				Name:    "main",
-				Primary: pgmesh.Connection{DSN: "primary"},
-			}},
-			Shards: pgmesh.Shards{
-				NumVShards: 1,
-				Mappings:   []pgmesh.VShardMapping{{VShards: []uint64{0}, MainReplicaSet: "main"}},
-			},
-			CreateNode: func(context.Context, string) (pgmesh.Node[string, *fakeWriter], error) {
+	type input struct {
+		numVShards uint64
+		createNode pgmesh.NodeFactory[string, *fakeWriter]
+		hasher     pgmesh.ShardHasher[uint64]
+		options    []pgmesh.MeshOption
+	}
+	valid := func() input {
+		return input{
+			numVShards: 1,
+			createNode: func(context.Context, string) (pgmesh.Node[string, *fakeWriter], error) {
 				return node("main"), nil
 			},
-			ShardHasher: pgmesh.ConstantShardHashFor[uint64](0),
+			hasher: pgmesh.ConstantShardHashFor[uint64](0),
+			options: []pgmesh.MeshOption{
+				pgmesh.WithReplicaSet("main", "primary"),
+				pgmesh.WithVShardMapping("main", []uint64{0}),
+			},
 		}
 	}
 
 	tests := []struct {
 		name string
-		edit func(*pgmesh.Options[string, *fakeWriter, uint64])
+		edit func(*input)
 		want error
 	}{
 		{
 			name: "no replica sets",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.ReplicaSets = nil },
+			edit: func(config *input) {
+				config.options = []pgmesh.MeshOption{
+					pgmesh.WithVShardMapping("main", []uint64{0}),
+				}
+			},
 			want: pgmesh.ErrNoReplicaSets,
 		},
 		{
 			name: "empty name",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.ReplicaSets[0].Name = "" },
+			edit: func(config *input) {
+				config.options[0] = pgmesh.WithReplicaSet("", "primary")
+			},
 			want: pgmesh.ErrEmptyReplicaSetName,
 		},
 		{
 			name: "whitespace name",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.ReplicaSets[0].Name = " \t" },
+			edit: func(config *input) {
+				config.options[0] = pgmesh.WithReplicaSet(" \t", "primary")
+			},
 			want: pgmesh.ErrEmptyReplicaSetName,
 		},
-		{name: "duplicate name", edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
-			o.ReplicaSets = append(o.ReplicaSets, o.ReplicaSets[0])
+		{name: "duplicate name", edit: func(config *input) {
+			config.options = append(config.options, pgmesh.WithReplicaSet("main", "other"))
 		}, want: pgmesh.ErrDuplicateReplicaSet},
 		{
 			name: "empty DSN",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.ReplicaSets[0].Primary.DSN = "" },
+			edit: func(config *input) {
+				config.options[0] = pgmesh.WithReplicaSet("main", "")
+			},
 			want: pgmesh.ErrEmptyDSN,
 		},
 		{
 			name: "whitespace primary DSN",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.ReplicaSets[0].Primary.DSN = " \t" },
+			edit: func(config *input) {
+				config.options[0] = pgmesh.WithReplicaSet("main", " \t")
+			},
 			want: pgmesh.ErrEmptyDSN,
 		},
 		{
 			name: "empty replica DSN",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
-				o.ReplicaSets[0].Replicas = []pgmesh.Connection{{DSN: ""}}
+			edit: func(config *input) {
+				config.options[0] = pgmesh.WithReplicaSet("main", "primary", "")
 			},
 			want: pgmesh.ErrEmptyDSN,
 		},
 		{
 			name: "no factory",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.CreateNode = nil },
+			edit: func(config *input) { config.createNode = nil },
 			want: pgmesh.ErrNoNodeFactory,
 		},
 		{
 			name: "no hasher",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.ShardHasher = nil },
+			edit: func(config *input) { config.hasher = nil },
 			want: pgmesh.ErrNoShardHasher,
 		},
 		{
 			name: "no virtual shards",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.Shards.NumVShards = 0 },
+			edit: func(config *input) { config.numVShards = 0 },
 			want: pgmesh.ErrNoVShards,
 		},
-		{name: "unknown main", edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
-			o.Shards.Mappings[0].MainReplicaSet = "missing"
+		{name: "unknown main", edit: func(config *input) {
+			config.options[1] = pgmesh.WithVShardMapping("missing", []uint64{0})
 		}, want: pgmesh.ErrUnknownReplicaSet},
-		{name: "unknown mirror", edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
-			o.Shards.Mappings[0].MirrorReplicaSets = []string{"missing"}
+		{name: "unknown mirror", edit: func(config *input) {
+			config.options[1] = pgmesh.WithVShardMapping("main", []uint64{0}, "missing")
 		}, want: pgmesh.ErrUnknownReplicaSet},
 		{
 			name: "self mirror",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
-				o.Shards.Mappings[0].MirrorReplicaSets = []string{"main"}
+			edit: func(config *input) {
+				config.options[1] = pgmesh.WithVShardMapping("main", []uint64{0}, "main")
 			},
 			want: pgmesh.ErrMirrorConfiguration,
 		},
 		{
 			name: "duplicate mirror",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
-				o.ReplicaSets = append(
-					o.ReplicaSets,
-					pgmesh.ReplicaSetSpec{Name: "mirror", Primary: pgmesh.Connection{DSN: "mirror"}},
-				)
-				o.Shards.Mappings[0].MirrorReplicaSets = []string{"mirror", "mirror"}
+			edit: func(config *input) {
+				config.options = []pgmesh.MeshOption{
+					pgmesh.WithReplicaSet("main", "primary"),
+					pgmesh.WithReplicaSet("mirror", "mirror"),
+					pgmesh.WithVShardMapping("main", []uint64{0}, "mirror", "mirror"),
+				}
 			},
 			want: pgmesh.ErrMirrorConfiguration,
 		},
 		{
 			name: "missing vshard",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.Shards.Mappings = nil },
+			edit: func(config *input) {
+				config.options = config.options[:1]
+			},
 			want: pgmesh.ErrMissingVShard,
 		},
-		{name: "duplicate vshard", edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
-			o.Shards.Mappings = append(o.Shards.Mappings, o.Shards.Mappings[0])
+		{name: "duplicate vshard", edit: func(config *input) {
+			config.options = append(config.options, pgmesh.WithVShardMapping("main", []uint64{0}))
 		}, want: pgmesh.ErrDuplicateVShard},
 		{
 			name: "out of range",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) { o.Shards.Mappings[0].VShards = []uint64{1} },
+			edit: func(config *input) {
+				config.options[1] = pgmesh.WithVShardMapping("main", []uint64{1})
+			},
 			want: pgmesh.ErrVShardOutOfRange,
 		},
 		{
 			name: "inconsistent mirrors",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
-				o.Shards.NumVShards = 2
-				o.ReplicaSets = append(
-					o.ReplicaSets,
-					pgmesh.ReplicaSetSpec{Name: "mirror", Primary: pgmesh.Connection{DSN: "mirror"}},
-				)
-				o.Shards.Mappings = []pgmesh.VShardMapping{
-					{VShards: []uint64{0}, MainReplicaSet: "main"},
-					{VShards: []uint64{1}, MainReplicaSet: "main", MirrorReplicaSets: []string{"mirror"}},
+			edit: func(config *input) {
+				config.numVShards = 2
+				config.options = []pgmesh.MeshOption{
+					pgmesh.WithReplicaSet("main", "primary"),
+					pgmesh.WithReplicaSet("mirror", "mirror"),
+					pgmesh.WithVShardMapping("main", []uint64{0}),
+					pgmesh.WithVShardMapping("main", []uint64{1}, "mirror"),
 				}
 			},
 			want: pgmesh.ErrMirrorConfiguration,
 		},
 		{
 			name: "inconsistent mirror order",
-			edit: func(o *pgmesh.Options[string, *fakeWriter, uint64]) {
-				o.Shards.NumVShards = 2
-				o.ReplicaSets = append(
-					o.ReplicaSets,
-					pgmesh.ReplicaSetSpec{Name: "mirror-a", Primary: pgmesh.Connection{DSN: "mirror-a"}},
-					pgmesh.ReplicaSetSpec{Name: "mirror-b", Primary: pgmesh.Connection{DSN: "mirror-b"}},
-				)
-				o.Shards.Mappings = []pgmesh.VShardMapping{
-					{VShards: []uint64{0}, MainReplicaSet: "main", MirrorReplicaSets: []string{"mirror-a", "mirror-b"}},
-					{VShards: []uint64{1}, MainReplicaSet: "main", MirrorReplicaSets: []string{"mirror-b", "mirror-a"}},
+			edit: func(config *input) {
+				config.numVShards = 2
+				config.options = []pgmesh.MeshOption{
+					pgmesh.WithReplicaSet("main", "primary"),
+					pgmesh.WithReplicaSet("mirror-a", "mirror-a"),
+					pgmesh.WithReplicaSet("mirror-b", "mirror-b"),
+					pgmesh.WithVShardMapping("main", []uint64{0}, "mirror-a", "mirror-b"),
+					pgmesh.WithVShardMapping("main", []uint64{1}, "mirror-b", "mirror-a"),
 				}
 			},
 			want: pgmesh.ErrMirrorConfiguration,
@@ -717,12 +755,29 @@ func TestCreateMeshValidation(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			opts := valid()
-			test.edit(opts)
-			_, err := pgmesh.CreateMesh(t.Context(), opts)
+			config := valid()
+			test.edit(&config)
+			_, err := pgmesh.CreateMesh(
+				t.Context(),
+				config.numVShards,
+				config.createNode,
+				config.hasher,
+				config.options...,
+			)
 			assert.ErrorIs(t, err, test.want)
 		})
 	}
+
+	_, err := pgmesh.CreateMesh(
+		t.Context(),
+		1,
+		valid().createNode,
+		valid().hasher,
+		pgmesh.WithReplicaSet("main", "primary"),
+		pgmesh.WithVShardMapping("main", []uint64{0}),
+		nil,
+	)
+	assert.ErrorContains(t, err, "mesh option 2 is nil")
 }
 
 func TestCreateMeshWrapsFactoryError(t *testing.T) {
@@ -731,7 +786,7 @@ func TestCreateMeshWrapsFactoryError(t *testing.T) {
 	sentinel := errors.New("connect failed")
 	tests := []struct {
 		name     string
-		replicas []pgmesh.Connection
+		replicas []string
 		factory  func(context.Context, string) (pgmesh.Node[string, *fakeWriter], error)
 		want     string
 	}{
@@ -744,7 +799,7 @@ func TestCreateMeshWrapsFactoryError(t *testing.T) {
 		},
 		{
 			name:     "replica",
-			replicas: []pgmesh.Connection{{DSN: "replica"}},
+			replicas: []string{"replica"},
 			factory: func(_ context.Context, dsn string) (pgmesh.Node[string, *fakeWriter], error) {
 				if dsn == "primary" {
 					return node("primary"), nil
@@ -758,16 +813,14 @@ func TestCreateMeshWrapsFactoryError(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := pgmesh.CreateMesh(t.Context(), &pgmesh.Options[string, *fakeWriter, uint64]{
-				ReplicaSets: []pgmesh.ReplicaSetSpec{{
-					Name: "main", Primary: pgmesh.Connection{DSN: "primary"}, Replicas: test.replicas,
-				}},
-				Shards: pgmesh.Shards{NumVShards: 1, Mappings: []pgmesh.VShardMapping{{
-					VShards: []uint64{0}, MainReplicaSet: "main",
-				}}},
-				CreateNode:  test.factory,
-				ShardHasher: pgmesh.ConstantShardHashFor[uint64](0),
-			})
+			_, err := pgmesh.CreateMesh(
+				t.Context(),
+				1,
+				test.factory,
+				pgmesh.ConstantShardHashFor[uint64](0),
+				pgmesh.WithReplicaSet("main", "primary", test.replicas...),
+				pgmesh.WithVShardMapping("main", []uint64{0}),
+			)
 			require.ErrorIs(t, err, sentinel)
 			assert.ErrorContains(t, err, test.want)
 		})

@@ -114,7 +114,7 @@ sqlc generate
 ```
 
 Alongside sqlc's output, pgmesh generates the public `Store` interface,
-`NewStore`, topology configuration types, and private routing executors.
+`NewStore`, topology option APIs, and private routing executors.
 
 Commit generated files when your project checks them in. Regenerate them after
 every schema, query, annotation, or relevant sqlc option change.
@@ -143,9 +143,7 @@ func main() {
     }
     defer pool.Close()
 
-    queries, err := db.NewStore(ctx, db.Database(db.DatabaseConfig{
-        Primary: pool,
-    }))
+    queries, err := db.NewStore(ctx, db.Singleton(pool))
     if err != nil {
         log.Fatal(err)
     }

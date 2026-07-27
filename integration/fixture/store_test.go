@@ -127,34 +127,64 @@ func (tenantResolver) Tenant(int64) uint64 {
 func buildTestStore(t *testing.T, primary, replica *fakeDB, mirrors ...*fakeDB) Store {
 	t.Helper()
 
-	replicaSets := []ShardDatabaseConfig{{
-		Name:     "main",
-		Primary:  primary,
-		Replicas: []DBTX{replica},
-	}}
+	options := []ShardedOption{WithReplicaSet("main", primary, replica)}
 	mirrorNames := make([]string, 0, len(mirrors))
 	for index, mirror := range mirrors {
 		if mirror != nil {
 			name := fmt.Sprintf("mirror-%d", index)
-			replicaSets = append(replicaSets, ShardDatabaseConfig{Name: name, Primary: mirror})
+			options = append(options, WithReplicaSet(name, mirror))
 			mirrorNames = append(mirrorNames, name)
 		}
 	}
-	store, err := NewStore(t.Context(), Sharded(ShardedConfig[uint64]{
-		ReplicaSets: replicaSets,
-		Shards: pgmesh.Shards{
-			NumVShards: 1,
-			Mappings: []pgmesh.VShardMapping{{
-				VShards:           []uint64{0},
-				MainReplicaSet:    "main",
-				MirrorReplicaSets: mirrorNames,
-			}},
-		},
-		ShardHasher: pgmesh.ConstantShardHashFor[uint64](0),
-		Resolver:    tenantResolver{},
-	}))
+	options = append(options, WithVShardMapping("main", []uint64{0}, mirrorNames...))
+	store, err := NewStore(
+		t.Context(),
+		Sharded(
+			1,
+			pgmesh.ConstantShardHashFor[uint64](0),
+			tenantResolver{},
+			options...,
+		),
+	)
 	require.NoError(t, err)
 	return store
+}
+
+func TestGeneratedTopologyOptionsCloneInputs(t *testing.T) {
+	t.Parallel()
+
+	log := &callLog{}
+	primary := &fakeDB{name: "primary", log: log}
+	replica := &fakeDB{name: "replica", log: log}
+	mirror := &fakeDB{name: "mirror", log: log}
+	replicas := []DBTX{replica}
+	vshards := []uint64{0}
+	mirrorNames := []string{"mirror"}
+	replicaSetOption := WithReplicaSet("main", primary, replicas...)
+	mappingOption := WithVShardMapping("main", vshards, mirrorNames...)
+
+	replicas[0] = nil
+	vshards[0] = 1
+	mirrorNames[0] = "missing"
+
+	store, err := NewStore(
+		t.Context(),
+		Sharded(
+			1,
+			pgmesh.ConstantShardHashFor[uint64](0),
+			tenantResolver{},
+			replicaSetOption,
+			WithReplicaSet("mirror", mirror),
+			mappingOption,
+		),
+	)
+	require.NoError(t, err)
+
+	_, err = store.GetUser(t.Context(), &GetUserParams{TenantID: 1, ID: 2})
+	require.NoError(t, err)
+	_, err = store.CreateUser(t.Context(), &CreateUserParams{ID: 1, TenantID: 2, Name: "user"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"replica", "primary", "mirror"}, log.snapshot())
 }
 
 func TestGeneratedStoreBehavior(t *testing.T) {
@@ -297,26 +327,38 @@ func TestGeneratedStoreBehavior(t *testing.T) {
 				log := &callLog{}
 				primary := &fakeDB{name: "primary", log: log}
 				tests := []struct {
-					name   string
-					config StoreConfig
-					want   string
+					name    string
+					config  Topology
+					options []StoreOption
+					want    string
 				}{
-					{name: "nil store config", want: "store config is nil"},
-					{name: "nil primary", config: Database(DatabaseConfig{}), want: "database primary is nil"},
+					{name: "nil topology", want: "topology is nil"},
+					{name: "nil primary", config: Singleton(nil), want: "database primary is nil"},
+					{
+						name:   "nil singleton option",
+						config: Singleton(primary, nil),
+						want:   "singleton option 0 is nil",
+					},
+					{
+						name:    "nil store option",
+						config:  Singleton(primary),
+						options: []StoreOption{nil},
+						want:    "store option 0 is nil",
+					},
 					{
 						name:   "nil replica",
-						config: Database(DatabaseConfig{Primary: primary, Replicas: []DBTX{nil}}),
+						config: Singleton(primary, WithReadReplicas(nil)),
 						want:   "database replica 0 is nil",
 					},
 					{
 						name:   "nil mirror",
-						config: Database(DatabaseConfig{Primary: primary, Mirrors: []DBTX{nil}}),
+						config: Singleton(primary, WithWriteMirrors(nil)),
 						want:   "database mirror 0 is nil",
 					},
 				}
 				for _, test := range tests {
 					t.Run(test.name, func(t *testing.T) {
-						_, err := NewStore(t.Context(), test.config)
+						_, err := NewStore(t.Context(), test.config, test.options...)
 						require.ErrorContains(t, err, test.want)
 					})
 				}
@@ -325,20 +367,30 @@ func TestGeneratedStoreBehavior(t *testing.T) {
 		{
 			name: "invalid sharded configurations",
 			run: func(t *testing.T) {
-				_, err := NewStore(t.Context(), Sharded(ShardedConfig[uint64]{}))
+				_, err := NewStore(t.Context(), Sharded[uint64](0, nil, nil))
 				require.ErrorContains(t, err, "shard resolver is nil")
 
-				_, err = NewStore(t.Context(), Sharded(ShardedConfig[uint64]{
-					ReplicaSets: []ShardDatabaseConfig{{Name: "main"}},
-					Shards: pgmesh.Shards{
-						NumVShards: 1,
-						Mappings: []pgmesh.VShardMapping{{
-							VShards: []uint64{0}, MainReplicaSet: "main",
-						}},
-					},
-					ShardHasher: pgmesh.ConstantShardHashFor[uint64](0),
-					Resolver:    tenantResolver{},
-				}))
+				_, err = NewStore(
+					t.Context(),
+					Sharded(
+						1,
+						pgmesh.ConstantShardHashFor[uint64](0),
+						tenantResolver{},
+						nil,
+					),
+				)
+				require.ErrorContains(t, err, "sharded option 0 is nil")
+
+				_, err = NewStore(
+					t.Context(),
+					Sharded(
+						1,
+						pgmesh.ConstantShardHashFor[uint64](0),
+						tenantResolver{},
+						WithReplicaSet("main", nil),
+						WithVShardMapping("main", []uint64{0}),
+					),
+				)
 				require.ErrorContains(t, err, "database node")
 				require.ErrorContains(t, err, "is nil")
 			},

@@ -35,7 +35,7 @@ type options struct {
 	RuntimeImportPath string `json:"runtime_import_path"`
 	// ResolverInterfaceName is the generated shard resolver interface name.
 	ResolverInterfaceName string `json:"resolver_interface"`
-	// ShardedConstructor creates an opaque sharded StoreConfig.
+	// ShardedConstructor creates an opaque sharded Topology.
 	ShardedConstructor string `json:"sharded_constructor"`
 
 	// SQLPackage selects the sqlc database driver; only pgx/v5 is supported.
@@ -288,14 +288,22 @@ func validateOptions(opts *options) error {
 	}
 	seenNames := make(map[string]string, len(publicNames))
 	reservedNames := map[string]struct{}{
-		"Database":            {},
-		"DatabaseConfig":      {},
-		"QueryOption":         {},
-		"ReadFromPrimary":     {},
-		"ShardDatabaseConfig": {},
-		"ShardedConfig":       {},
-		"StoreConfig":         {},
-		"WithTx":              {},
+		"QueryOption":        {},
+		"ReadFromPrimary":    {},
+		"ShardedOption":      {},
+		"Singleton":          {},
+		"SingletonOption":    {},
+		"StoreOption":        {},
+		"Topology":           {},
+		"WithDatabaseName":   {},
+		"WithLogger":         {},
+		"WithMeterProvider":  {},
+		"WithReadReplicas":   {},
+		"WithReplicaSet":     {},
+		"WithTracerProvider": {},
+		"WithTx":             {},
+		"WithVShardMapping":  {},
+		"WithWriteMirrors":   {},
 	}
 	if opts.InternalImportPath == "" {
 		reservedNames["DBTX"] = struct{}{}

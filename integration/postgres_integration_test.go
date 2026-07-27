@@ -74,35 +74,24 @@ func newPostgresHarness(t *testing.T) *postgresHarness {
 		require.NoError(t, err, "ping %s", name)
 		pools[name] = pool
 	}
-	queries, err := fixture.NewStore(t.Context(), fixture.Sharded(fixture.ShardedConfig[uint64]{
-		ReplicaSets: []fixture.ShardDatabaseConfig{
-			{
-				Name:    "shard0",
-				Primary: pools["shard0-primary"],
-				Replicas: []fixture.DBTX{
-					pools["shard0-replica0"],
-					pools["shard0-replica1"],
-				},
-			},
-			{
-				Name:    "shard1",
-				Primary: pools["shard1-primary"],
-			},
-			{
-				Name:    "shard0-mirror",
-				Primary: pools["shard0-mirror"],
-			},
-		},
-		Shards: pgmesh.Shards{
-			NumVShards: 2,
-			Mappings: []pgmesh.VShardMapping{
-				{VShards: []uint64{0}, MainReplicaSet: "shard0", MirrorReplicaSets: []string{"shard0-mirror"}},
-				{VShards: []uint64{1}, MainReplicaSet: "shard1"},
-			},
-		},
-		ShardHasher: pgmesh.ModularShardHashFor[uint64](2),
-		Resolver:    tenantResolver{},
-	}))
+	queries, err := fixture.NewStore(
+		t.Context(),
+		fixture.Sharded(
+			2,
+			pgmesh.ModularShardHashFor[uint64](2),
+			tenantResolver{},
+			fixture.WithReplicaSet(
+				"shard0",
+				pools["shard0-primary"],
+				pools["shard0-replica0"],
+				pools["shard0-replica1"],
+			),
+			fixture.WithReplicaSet("shard1", pools["shard1-primary"]),
+			fixture.WithReplicaSet("shard0-mirror", pools["shard0-mirror"]),
+			fixture.WithVShardMapping("shard0", []uint64{0}, "shard0-mirror"),
+			fixture.WithVShardMapping("shard1", []uint64{1}),
+		),
+	)
 	require.NoError(t, err)
 
 	return &postgresHarness{

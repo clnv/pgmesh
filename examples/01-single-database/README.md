@@ -1,6 +1,6 @@
 # Single database
 
-This is the baseline: construct the generated `Store` with a `DatabaseConfig`
+This is the baseline: construct the generated `Store` with a `Singleton`
 containing one pgx pool. The query API is the same as in the replica and
 sharded examples.
 

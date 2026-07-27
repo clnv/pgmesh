@@ -12,13 +12,15 @@ logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
     Level: slog.LevelDebug,
 }))
 
-store, err := db.NewStore(ctx, db.Database(db.DatabaseConfig{
-    Primary: pool,
-    Logger: logger,
-}))
+store, err := db.NewStore(
+    ctx,
+    db.Singleton(pool),
+    db.WithLogger(logger),
+)
 ```
 
-`ShardedConfig` has the same logger field. Passing nil disables logging.
+`WithLogger` applies to both singleton and sharded topologies. Omitting it or
+passing nil disables logging.
 pgmesh does not modify the logger or its handler; if the handler's minimum
 level is higher than Debug, the records are filtered normally.
 

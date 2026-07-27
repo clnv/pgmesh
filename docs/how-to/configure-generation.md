@@ -51,10 +51,10 @@ sql:
 | `package` | string | sqlc output directory basename, otherwise `db` | Go package clause for wrappers. |
 | `internal_import_path` | string | empty | Imports sqlc output when wrappers use a separate package. |
 | `internal_import_alias` | string | `internal` | Optional valid Go alias for `internal_import_path`. |
-| `constructor` | exported identifier | `NewStore` | Public constructor that accepts an opaque `StoreConfig`. |
+| `constructor` | exported identifier | `NewStore` | Public constructor that accepts an opaque `Topology`. |
 | `store_interface` | exported identifier | `Store` | Public topology-independent query interface. |
 | `resolver_interface` | exported identifier | `ShardResolver` | Public generic shard resolver interface. |
-| `sharded_constructor` | exported identifier | `Sharded` | Public sharded `StoreConfig` constructor. |
+| `sharded_constructor` | exported identifier | `Sharded` | Public sharded `Topology` constructor. |
 | `runtime_import_path` | string | `github.com/clnv/pgmesh` | Runtime import override, primarily for forks. |
 | `ignore_mirror_error` | boolean | `false` | Discards mirror errors. By default only mirror `ErrNoRows` is ignored. |
 | `sql_package` | string | `pgx/v5` | sqlc driver selection; no other value is supported. |
@@ -101,8 +101,8 @@ with `\`. `go_type` supports sqlc's string form and map form shown above.
 - `zz_generated_store_interfaces.go` for `Store` and shard resolver contracts;
 - `zz_generated_store_read.go` for the private read executor;
 - `zz_generated_store_write.go` for private primary and mirror execution;
-- `zz_generated_store.go` for query options, `DatabaseConfig`, `NewStore`, and routing;
-- `zz_generated_store_sharded.go` for `ShardedConfig` and topology construction.
+- `zz_generated_store.go` for query and store options, `Topology`, `Singleton`, `NewStore`, and routing;
+- `zz_generated_store_sharded.go` for sharded functional options and topology construction.
 
 The sharded file contains only its generated header and package clause when no
 query has shard metadata. This ensures regeneration removes obsolete routed
@@ -113,10 +113,15 @@ The stable default public surface is:
 | Symbol | Purpose |
 | --- | --- |
 | `Store` | Topology-independent generated query interface |
-| `NewStore(ctx, config)` | Store constructor |
-| `Database(DatabaseConfig)` | Single-primary configuration with optional replicas and mirrors |
-| `Sharded(ShardedConfig)` | Sharded configuration, emitted for routed stores |
+| `NewStore(ctx, topology, ...StoreOption)` | Store constructor and common telemetry options |
+| `Singleton(primary, ...SingletonOption)` | Single-primary topology with optional replicas and mirrors |
+| `Sharded(numVShards, hasher, resolver, ...ShardedOption)` | Sharded topology, emitted for routed stores |
 | `ReadFromPrimary`, `WithTx` | Per-query routing options |
+
+Repeated topology options append in call order. Common scalar store options,
+such as `WithLogger`, use the last supplied value. Option constructors clone
+slice inputs, and `NewStore` reports nil topology, singleton, sharded, or store
+options as configuration errors.
 
 Internal sqlc integration is fixed to `Querier`, `Queries`, and `New`.
 Generated implementation names such as `queryStore`, `readQueries`,
