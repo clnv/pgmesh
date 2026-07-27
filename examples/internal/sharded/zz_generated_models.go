@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.31.1
 
-package exampledb
+package sharded
 
 type Account struct {
 	ID          int64

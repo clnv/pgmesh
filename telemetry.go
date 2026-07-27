@@ -72,8 +72,8 @@ type queryTelemetry struct {
 	logger        *slog.Logger
 }
 
-// QueryTrace tracks telemetry for one routed query.
-type QueryTrace struct {
+// QuerySpan records tracing, metrics, and logging for one routed query.
+type QuerySpan struct {
 	ctx           context.Context
 	span          trace.Span
 	queryCount    metric.Int64Counter
@@ -133,26 +133,27 @@ func (t *queryTelemetry) setMeterProvider(provider metric.MeterProvider) error {
 	return nil
 }
 
-// StartQueryTrace starts telemetry for a routed query and returns the span
-// context so database instrumentation can create child spans.
+// StartSpan starts telemetry for a routed query and returns the span context so
+// database instrumentation can create child spans.
 //
-//nolint:spancheck // The generated caller ends the returned QueryTrace.
-func (m *Mesh[R, W, SK]) StartQueryTrace(
+//nolint:spancheck // The generated caller ends the returned QuerySpan.
+func (m *Mesh[R, W, SK]) StartSpan(
 	ctx context.Context,
+	storeName string,
 	queryName string,
 	kind QueryKind,
-) (context.Context, *QueryTrace) {
+) (context.Context, *QuerySpan) {
 	attributes := []attribute.KeyValue{
 		attribute.String(AttributeQueryName, queryName),
 		attribute.String(AttributeQueryKind, string(kind)),
 	}
 	ctx, span := m.telemetry.tracer.Start(
 		ctx,
-		"pgmesh.query "+queryName,
+		"pgmesh.query."+storeName+"."+queryName,
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(attributes...),
 	)
-	return ctx, &QueryTrace{
+	return ctx, &QuerySpan{
 		ctx:           ctx,
 		span:          span,
 		queryCount:    m.telemetry.queryCount,
@@ -169,7 +170,7 @@ func (m *Mesh[R, W, SK]) StartQueryTrace(
 
 // SetRoute records the selected virtual shard, replica set, route mode, and
 // synchronous mirror count.
-func (t *QueryTrace) SetRoute(
+func (s *QuerySpan) SetRoute(
 	vshard uint64,
 	replicaSet string,
 	mode RouteMode,
@@ -181,10 +182,10 @@ func (t *QueryTrace) SetRoute(
 		attribute.String(AttributeRouteMode, string(mode)),
 		attribute.Int(AttributeWriteMirrorCount, writeMirrorCount),
 	}
-	t.span.SetAttributes(routeAttributes...)
-	t.attributes = append(t.attributes, routeAttributes...)
-	t.logAttributes = append(
-		t.logAttributes,
+	s.span.SetAttributes(routeAttributes...)
+	s.attributes = append(s.attributes, routeAttributes...)
+	s.logAttributes = append(
+		s.logAttributes,
 		slog.String("vshard", strconv.FormatUint(vshard, 10)),
 		slog.String("replica_set", replicaSet),
 		slog.String("route_mode", string(mode)),
@@ -194,29 +195,29 @@ func (t *QueryTrace) SetRoute(
 
 // End records metrics and a debug log, records err if present, then ends the
 // routed query span.
-func (t *QueryTrace) End(err error) {
-	duration := time.Since(t.started)
+func (s *QuerySpan) End(err error) {
+	duration := time.Since(s.started)
 	if err != nil {
-		t.span.RecordError(err)
-		t.span.SetStatus(codes.Error, err.Error())
+		s.span.RecordError(err)
+		s.span.SetStatus(codes.Error, err.Error())
 	}
 	metricAttributes := append(
-		append([]attribute.KeyValue(nil), t.attributes...),
+		append([]attribute.KeyValue(nil), s.attributes...),
 		attribute.Bool(AttributeQueryError, err != nil),
 	)
 	recordOptions := metric.WithAttributes(metricAttributes...)
-	t.queryCount.Add(t.ctx, 1, recordOptions)
-	t.queryDuration.Record(t.ctx, duration.Seconds(), recordOptions)
-	if t.logger != nil && t.logger.Enabled(t.ctx, slog.LevelDebug) {
+	s.queryCount.Add(s.ctx, 1, recordOptions)
+	s.queryDuration.Record(s.ctx, duration.Seconds(), recordOptions)
+	if s.logger != nil && s.logger.Enabled(s.ctx, slog.LevelDebug) {
 		logAttributes := append(
-			append([]slog.Attr(nil), t.logAttributes...),
+			append([]slog.Attr(nil), s.logAttributes...),
 			slog.Bool("failed", err != nil),
 			slog.Duration("duration", duration),
 		)
 		if err != nil {
 			logAttributes = append(logAttributes, slog.Any("error", err))
 		}
-		t.logger.LogAttrs(t.ctx, slog.LevelDebug, "pgmesh query completed", logAttributes...)
+		s.logger.LogAttrs(s.ctx, slog.LevelDebug, "pgmesh query completed", logAttributes...)
 	}
-	t.span.End()
+	s.span.End()
 }

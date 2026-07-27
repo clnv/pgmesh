@@ -3,17 +3,11 @@
 //   sqlc v1.31.1
 // source: queries.sql
 
-package exampledb
+package sharded
 
 import (
 	"context"
 )
-
-type CopyAccountsParams struct {
-	ID          int64
-	TenantID    int64
-	DisplayName string
-}
 
 const getAccount = `-- name: GetAccount :one
 SELECT id, tenant_id, display_name
@@ -33,33 +27,6 @@ func (q *Queries) GetAccount(ctx context.Context, arg *GetAccountParams) (*Accou
 	var i Account
 	err := row.Scan(&i.ID, &i.TenantID, &i.DisplayName)
 	return &i, err
-}
-
-const listAccounts = `-- name: ListAccounts :many
-SELECT id, tenant_id, display_name
-FROM accounts
-ORDER BY id
-`
-
-// kind: read
-func (q *Queries) ListAccounts(ctx context.Context) ([]*Account, error) {
-	rows, err := q.db.Query(ctx, listAccounts)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []*Account
-	for rows.Next() {
-		var i Account
-		if err := rows.Scan(&i.ID, &i.TenantID, &i.DisplayName); err != nil {
-			return nil, err
-		}
-		items = append(items, &i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const updateAccountName = `-- name: UpdateAccountName :one

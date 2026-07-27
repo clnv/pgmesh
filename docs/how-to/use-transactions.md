@@ -1,13 +1,13 @@
 # Use transactions
 
-A transaction is owned by one PostgreSQL connection. Route first, begin the
-transaction on that physical shard's primary pool, and then pass the transaction
-to generated methods.
+A transaction is owned by one PostgreSQL connection. Select the primary pool
+with the same resolver, hasher, and mapping used in `ShardedConfig`, then pass
+the transaction to generated `Store` methods.
 
 ## Retain primary pools
 
-When creating nodes, retain primary pools by replica-set name or DSN. pgmesh
-does not expose or close the connections created by your node factory.
+Retain primary pools by replica-set name when constructing the store. pgmesh
+does not own or close configured pools.
 
 ```go
 primaryPools := map[string]*pgxpool.Pool{
@@ -18,24 +18,22 @@ primaryPools := map[string]*pgxpool.Pool{
 
 ## Resolve the target shard
 
-Use the same resolver and mesh as the generated method:
+Use the same resolver, hasher, and mapping as the store configuration:
 
 ```go
 resolver := tenantResolver{}
 key := resolver.Tenant(tenantID)
-shard, err := mesh.Shard(key)
-if err != nil {
-    return err
-}
+vshard := hasher.Hash(key)
+replicaSetName := configuredReplicaSetFor(vshard)
 ```
 
-The resolver produces the logical key; `mesh.Shard` applies the configured
-hasher and virtual-shard mapping.
+Keep this placement helper beside topology construction so transaction setup
+and `ShardedConfig` cannot silently diverge.
 
 ## Begin on the selected primary
 
 ```go
-pool := primaryPools[shard.Name()]
+pool := primaryPools[replicaSetName]
 tx, err := pool.Begin(ctx)
 if err != nil {
     return err
@@ -75,7 +73,7 @@ the primary. It takes precedence over normal replica selection.
   selected from the query arguments. Begin it from the matching primary pool.
 - All queries in one transaction must resolve to the same physical shard.
 - pgmesh does not coordinate cross-shard transactions.
-- Transaction-bound generated wrappers do not fan writes out to mirrors.
+- Transaction-bound generated calls do not fan writes out to mirrors.
 - Always commit or roll back using normal pgx transaction handling.
 
 The mirror exception is critical during physical-shard expansion: transactional

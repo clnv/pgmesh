@@ -140,21 +140,26 @@ func TestQueryTelemetryRecordsRoutingAndErrors(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	ctx, queryTrace := mesh.StartQueryTrace(t.Context(), "CreateUser", pgmesh.QueryKindWrite)
+	ctx, span := mesh.StartSpan(
+		t.Context(),
+		"UserStore",
+		"CreateUser",
+		pgmesh.QueryKindWrite,
+	)
 	assert.True(t, trace.SpanFromContext(ctx).SpanContext().IsValid())
-	queryTrace.SetRoute(0, "main", pgmesh.RouteModePrimary, replicaSet.WriteMirrorCount())
+	span.SetRoute(0, "main", pgmesh.RouteModePrimary, replicaSet.WriteMirrorCount())
 	queryErr := errors.New("write failed")
-	queryTrace.End(queryErr)
+	span.End(queryErr)
 
 	spans := recorder.Ended()
 	require.Len(t, spans, 1)
-	span := spans[0]
-	assert.Equal(t, "pgmesh.query CreateUser", span.Name())
-	assert.Equal(t, codes.Error, span.Status().Code)
-	assert.Equal(t, queryErr.Error(), span.Status().Description)
+	recordedSpan := spans[0]
+	assert.Equal(t, "pgmesh.query.UserStore.CreateUser", recordedSpan.Name())
+	assert.Equal(t, codes.Error, recordedSpan.Status().Code)
+	assert.Equal(t, queryErr.Error(), recordedSpan.Status().Description)
 
 	attributes := make(map[attribute.Key]attribute.Value)
-	for _, item := range span.Attributes() {
+	for _, item := range recordedSpan.Attributes() {
 		attributes[item.Key] = item.Value
 	}
 	assert.Equal(t, "CreateUser", attributes[pgmesh.AttributeQueryName].AsString())
@@ -163,8 +168,8 @@ func TestQueryTelemetryRecordsRoutingAndErrors(t *testing.T) {
 	assert.Equal(t, "main", attributes[pgmesh.AttributeReplicaSet].AsString())
 	assert.Equal(t, "primary", attributes[pgmesh.AttributeRouteMode].AsString())
 	assert.Equal(t, int64(1), attributes[pgmesh.AttributeWriteMirrorCount].AsInt64())
-	require.Len(t, span.Events(), 1)
-	assert.Equal(t, "exception", span.Events()[0].Name)
+	require.Len(t, recordedSpan.Events(), 1)
+	assert.Equal(t, "exception", recordedSpan.Events()[0].Name)
 
 	var metrics metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(t.Context(), &metrics))

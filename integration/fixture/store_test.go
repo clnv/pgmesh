@@ -125,29 +125,40 @@ func (tenantResolver) Tenant(int64) uint64 {
 	return 0
 }
 
-func buildTestStore(t *testing.T, primary, replica *fakeDB, mirrors ...*fakeDB) *ShardedQueries[uint64] {
+func buildTestStore(t *testing.T, primary, replica *fakeDB, mirrors ...*fakeDB) Store {
 	t.Helper()
 
-	primaryNode := NewStoreNode(primary)
-	replicaSet := pgmesh.NewReplicaSet(
-		"main",
-		primaryNode,
-		[]pgmesh.Node[*ReadQueries, *StoreQueries]{NewStoreNode(replica)},
-	)
-	for _, mirror := range mirrors {
+	replicaSets := []ShardDatabaseConfig{{
+		Name:     "main",
+		Primary:  primary,
+		Replicas: []DBTX{replica},
+	}}
+	mirrorNames := make([]string, 0, len(mirrors))
+	for index, mirror := range mirrors {
 		if mirror != nil {
-			replicaSet = replicaSet.WithWriteMirrors(NewStoreNode(mirror).Writer())
+			name := fmt.Sprintf("mirror-%d", index)
+			replicaSets = append(replicaSets, ShardDatabaseConfig{Name: name, Primary: mirror})
+			mirrorNames = append(mirrorNames, name)
 		}
 	}
-	mesh, err := pgmesh.NewBuilder[*ReadQueries, *StoreQueries, uint64](1).
-		WithHasher(pgmesh.ConstantShardHashFor[uint64](0)).
-		Link(0, replicaSet).
-		Build()
+	store, err := NewStore(t.Context(), Sharded(ShardedConfig[uint64]{
+		ReplicaSets: replicaSets,
+		Shards: pgmesh.Shards{
+			NumVShards: 1,
+			Mappings: []pgmesh.VShardMapping{{
+				VShards:           []uint64{0},
+				MainReplicaSet:    "main",
+				MirrorReplicaSets: mirrorNames,
+			}},
+		},
+		ShardHasher: pgmesh.ConstantShardHashFor[uint64](0),
+		Resolver:    tenantResolver{},
+	}))
 	require.NoError(t, err)
-	return NewShardedQueries(mesh, tenantResolver{})
+	return store
 }
 
-func TestShardedQueriesSelectReadEndpoints(t *testing.T) {
+func TestStoreSelectReadEndpoints(t *testing.T) {
 	t.Parallel()
 
 	log := &callLog{}
@@ -164,7 +175,7 @@ func TestShardedQueriesSelectReadEndpoints(t *testing.T) {
 	assert.Equal(t, []string{"replica", "primary"}, log.snapshot())
 }
 
-func TestShardedQueriesMirrorWritesAndIgnoreMissingRows(t *testing.T) {
+func TestStoreMirrorWritesAndIgnoreMissingRows(t *testing.T) {
 	t.Parallel()
 
 	log := &callLog{}
@@ -182,7 +193,7 @@ func TestShardedQueriesMirrorWritesAndIgnoreMissingRows(t *testing.T) {
 	assert.Equal(t, []string{"primary", "mirror", "mirror-after-missing"}, log.snapshot())
 }
 
-func TestShardedQueriesReturnMirrorErrors(t *testing.T) {
+func TestStoreReturnMirrorErrors(t *testing.T) {
 	t.Parallel()
 
 	log := &callLog{}
@@ -201,7 +212,7 @@ func TestShardedQueriesReturnMirrorErrors(t *testing.T) {
 	assert.Equal(t, []string{"primary", "mirror"}, log.snapshot())
 }
 
-func TestShardedQueriesMirrorWritesInOrder(t *testing.T) {
+func TestStoreMirrorWritesInOrder(t *testing.T) {
 	t.Parallel()
 
 	log := &callLog{}
@@ -218,7 +229,7 @@ func TestShardedQueriesMirrorWritesInOrder(t *testing.T) {
 	assert.Equal(t, []string{"primary", "mirror0", "mirror1"}, log.snapshot())
 }
 
-func TestShardedQueriesSkipMirrorsAfterPrimaryError(t *testing.T) {
+func TestStoreSkipMirrorsAfterPrimaryError(t *testing.T) {
 	t.Parallel()
 
 	log := &callLog{}
@@ -236,7 +247,7 @@ func TestShardedQueriesSkipMirrorsAfterPrimaryError(t *testing.T) {
 	assert.Equal(t, []string{"primary"}, log.snapshot())
 }
 
-func TestShardedQueriesTransactionPinsPrimaryAndDropsMirrors(t *testing.T) {
+func TestStoreTransactionPinsPrimaryAndDropsMirrors(t *testing.T) {
 	t.Parallel()
 
 	log := &callLog{}

@@ -10,11 +10,11 @@ cd examples
 just generate
 ```
 
-The checked-in generated package at `../internal/db` contains node-level
-read/write wrappers and a typed `ShardedQueries[SK]` facade. `ListAccounts` has
-no shard annotation, so it is available only through the node-level wrappers.
-`CopyAccounts` demonstrates that callers must partition copy inputs before
-selecting a shard manually.
+The checked-in generated packages expose only their topology-independent
+`Store` interfaces and config-driven constructors. `internal/sharded` contains
+the account store with shard annotations; `internal/one` contains the settings
+store with its own model and no shard routes. Both are called through the same
+generated API shape even though their internal routing differs.
 
 The larger checked-in fixture under `integration/fixture` compiles generated
 same-package and separate-package layouts and is exercised against five local

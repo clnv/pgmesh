@@ -22,14 +22,3 @@ ON CONFLICT (id) DO UPDATE
 SET tenant_id = EXCLUDED.tenant_id,
     display_name = EXCLUDED.display_name
 RETURNING id, tenant_id, display_name;
-
--- name: ListAccounts :many
--- kind: read
-SELECT id, tenant_id, display_name
-FROM accounts
-ORDER BY id;
-
--- name: CopyAccounts :copyfrom
--- kind: write
-INSERT INTO accounts (id, tenant_id, display_name)
-VALUES ($1, $2, $3);

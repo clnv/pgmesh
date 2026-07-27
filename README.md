@@ -50,6 +50,7 @@ SELECT * FROM accounts WHERE tenant_id = $1 AND id = $2;
 
 -- name: UpsertAccount :one
 -- kind: write
+-- shard: tenant(tenant_id)
 INSERT INTO accounts (id, tenant_id, display_name) VALUES ($1, $2, $3)
 ON CONFLICT (id) DO UPDATE SET display_name = EXCLUDED.display_name
 RETURNING *;
@@ -62,19 +63,21 @@ and pgmesh's wrappers:
 sqlc generate
 ```
 
-Start with a single database using the generated store:
+Construct the generated `Store` with a database configuration:
 
 ```go
-queries := db.NewStoreQueries(pool)
+queries, err := db.NewStore(ctx, db.Database(db.DatabaseConfig{
+    Primary: pool,
+}))
 account, err := queries.GetAccount(ctx, &db.GetAccountParams{
     TenantID: tenantID,
     ID:       accountID,
 })
 ```
 
-When the deployment grows, create a `Mesh` and use the generated routed facade.
-The SQL methods stay the same while pgmesh chooses the shard and read or write
-endpoint.
+When the deployment grows, replace `DatabaseConfig` with `ShardedConfig`.
+`queries` remains the same `db.Store` interface, so business code does not
+depend on whether pgmesh uses one database, replicas, mirrors, or shards.
 
 Follow the [quickstart](docs/quickstart.md) for a complete working setup, or
 explore the [progressive examples](examples) from one database through replicas,

@@ -21,14 +21,34 @@ topology.
 ## How pgmesh divides the work
 
 Annotated SQL is processed by both sqlc and the pgmesh process plugin. sqlc
-continues to generate models and database methods. pgmesh generates capability
-views over those methods:
+continues to generate models and database methods. pgmesh generates one public
+`Store` interface over those methods. Application query code always depends on
+that interface:
 
-- `ReadQueries` contains only queries annotated `kind: read`.
-- `WriteQueries` contains only queries annotated `kind: write`.
-- `StoreQueries` combines both views for a primary connection.
-- `NewStoreNode` pairs the read-only and primary-capable views.
-- `ShardedQueries` routes queries that have a `shard` annotation.
+```go
+func loadAccount(ctx context.Context, store db.Store, arg *db.GetAccountParams) (*db.Account, error) {
+    return store.GetAccount(ctx, arg)
+}
+```
+
+`NewStore(ctx, config)` chooses the internal implementation. `DatabaseConfig`
+supports one primary, optional read replicas, and optional write mirrors.
+`ShardedConfig` adds virtual-shard mappings and a generated `ShardResolver`.
+Both configurations return the same `Store`.
+
+| Capability | Configuration |
+| --- | --- |
+| Single database | `DatabaseConfig{Primary: pool}` |
+| Read/write separation | Add `DatabaseConfig.Replicas` |
+| Sharding | Use `ShardedConfig` when every query has a `shard` annotation |
+| Write mirrors | Add `DatabaseConfig.Mirrors` or sharded mirror mappings |
+| Transactions | Pass the same generated `WithTx(tx)` query option |
+
+The generated read, write, one-database, replica-set, and sharded executors are
+unexported. They enforce endpoint capabilities internally without becoming
+part of the application API. A generated store cannot mix routed and
+unrouted queries; unsharded models belong in a separate generated package and
+still expose the same `Store` shape.
 
 At runtime, a `Mesh` maps a logical key through a virtual shard to a physical
 `ReplicaSet`. Reads use replica readers by default. Writes and explicit strong
@@ -41,10 +61,10 @@ Go types, and deployment topology in application configuration.
 
 ## Why generated wrappers
 
-The distinction between a reader and a writer is useful at compile time. A
-replica is exposed as `ReadQueries`, so a write method is not available on that
-value. Runtime reflection or a generic proxy could choose an endpoint, but it
-could not provide the same method-level capability boundary.
+The distinction between a reader and a writer is useful inside generated code.
+A replica is represented by a read-only executor, so a generated write cannot
+be sent to it. These capability types remain private because application code
+only needs the topology-independent `Store`.
 
 Generation also lets routed method signatures remain aligned with sqlc options
 such as parameter structs, pointers, renames, overrides, and result shapes.
@@ -103,6 +123,6 @@ pgmesh fits applications that already want sqlc and pgx/v5, need explicit
 read/write separation, and prefer routing inside the Go type system rather than
 behind a transparent database proxy.
 
-For a single database, the generated `StoreQueries` wrapper can be used without
-a `Mesh`. Replica sets and sharding can then be introduced without changing the
-SQL method definitions.
+Start with `DatabaseConfig{Primary: pool}`. Replicas, mirrors, and sharding can
+then be introduced by changing construction without changing SQL method
+definitions or application query interfaces.

@@ -9,6 +9,7 @@
 | Invalid or misplaced shard annotation | `shard` is malformed or appears later | Use `-- shard: route(operand, ...)` directly after `kind` |
 | Unknown shard operand | The route names a result column or nonexistent parameter | Name an input parameter recognized by sqlc |
 | Conflicting route types | The same resolver method is inferred with incompatible operand types | Align the SQL parameter types or use different route names |
+| A sharded store contains an unsharded query | One generated store mixes routing models | Add shard metadata or move the model and queries to another generated package |
 | Generated code does not compile | sqlc and plugin options differ | Align pointer, rename, override, package, and parameter-limit options |
 
 Regenerate with the pinned repository toolchain:
@@ -20,14 +21,14 @@ go test ./...
 
 ## Topology construction errors
 
-`CreateMesh` validates the topology before returning it:
+`NewStore` validates the opaque topology before returning it:
 
 - every replica-set name must be unique and non-empty;
-- every primary and replica DSN must be non-empty;
+- every configured primary and replica database must be present;
 - every mapping must reference known replica sets;
 - every virtual shard must be mapped exactly once;
 - mirror lists for one main replica set must be consistent;
-- the node factory and shard hasher must be present.
+- the shard resolver and hasher must be present for sharded configurations.
 
 Use `errors.Is` with the exported errors in
 [`errors.go`](../../errors.go) when startup diagnostics need classification.
@@ -56,15 +57,15 @@ been reconciled; follow the
 ## A transaction reaches the wrong database
 
 The transaction was probably opened from a pool that does not match the query's
-resolved physical shard. Resolve with the same `ShardResolver`, call
-`mesh.Shard`, and begin the transaction from that shard's retained primary
-pool. pgmesh cannot validate the origin of a `pgx.Tx`.
+resolved physical shard. Use the same resolver, hasher, and mapping held in the
+store configuration to choose the retained primary pool. pgmesh cannot
+validate the origin of a `pgx.Tx`.
 
-## A batch or copy method is absent from `ShardedQueries`
+## A batch or copy method cannot be generated with sharding
 
 This is intentional. pgmesh does not automatically partition `:copyfrom` or
-`:batch*` inputs. Group them by shard, select each shard explicitly, and call
-the node-level writer.
+`:batch*` inputs. Put manually partitioned operations in a separate unsharded
+generated store.
 
 ## Local integration failures
 
