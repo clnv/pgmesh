@@ -18,6 +18,9 @@ type Querier interface {
 	// kind: read
 	// shard: tenant(tenant_id)
 	GetUser(ctx context.Context, arg *GetUserParams) (*User, error)
+	// kind: write
+	// shard: tenant(tenant_id)
+	UpdateUserName(ctx context.Context, arg *UpdateUserNameParams) (*User, error)
 }
 
 var _ Querier = (*Queries)(nil)

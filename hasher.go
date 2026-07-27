@@ -30,11 +30,20 @@ type modularHasher[SK IntShardKey] struct {
 }
 
 func (h modularHasher[SK]) Hash(key SK) uint64 {
+	if key < 0 {
+		magnitudeRemainder := (uint64(-(key + 1)) + 1) % h.numVShards
+		if magnitudeRemainder == 0 {
+			return 0
+		}
+		return h.numVShards - magnitudeRemainder
+	}
 	return uint64(key) % h.numVShards
 }
 
 // ModularShardHashFor returns a hasher that maps integer keys modulo numVShards.
-// It panics if numVShards is zero.
+// Signed keys use Euclidean modulo, so negative values map into the same
+// [0, numVShards) range without overflowing at the minimum integer value.
+// Named integer types are supported. It panics if numVShards is zero.
 func ModularShardHashFor[SK IntShardKey](numVShards uint64) ShardHasher[SK] {
 	if numVShards == 0 {
 		panic("pgmesh: numVShards must not be zero")

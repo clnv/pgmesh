@@ -1,0 +1,53 @@
+package sqlcplugin
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestStructName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		input  string
+		rename map[string]string
+		want   string
+	}{
+		{name: "snake case", input: "user_profile", want: "UserProfile"},
+		{name: "initialism", input: "user_id", want: "UserID"},
+		{name: "punctuation", input: "audit-event", want: "AuditEvent"},
+		{name: "leading number", input: "2fa_token", want: "_2faToken"},
+		{name: "rename", input: "users", rename: map[string]string{"users": "People"}, want: "People"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, test.want, structName(test.input, &options{Rename: test.rename}))
+		})
+	}
+}
+
+func TestPackageNameForImport(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		importPath string
+		want       string
+	}{
+		{name: "standard library", importPath: "encoding/json", want: "json"},
+		{name: "versioned module", importPath: "github.com/jackc/pgx/v5", want: "pgx"},
+		{name: "go prefix and suffix", importPath: "example.test/go-domain-go", want: "domain"},
+		{name: "invalid package runes", importPath: "example.test/my-types", want: "my_types"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, test.want, packageNameForImport(test.importPath))
+		})
+	}
+}

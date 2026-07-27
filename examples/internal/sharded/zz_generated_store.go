@@ -83,13 +83,20 @@ type StoreConfig interface {
 
 // DatabaseConfig configures a single primary, optional read replicas, and optional write mirrors.
 type DatabaseConfig struct {
-	Name           string
-	Primary        DBTX
-	Replicas       []DBTX
-	Mirrors        []DBTX
+	// Name identifies the database in telemetry; empty defaults to "default".
+	Name string
+	// Primary serves writes and explicit primary reads. The caller owns its lifecycle.
+	Primary DBTX
+	// Replicas serve ordinary reads in round-robin order. The caller owns their lifecycles.
+	Replicas []DBTX
+	// Mirrors synchronously receive writes in slice order after the primary succeeds.
+	Mirrors []DBTX
+	// TracerProvider records routed query spans; nil uses the global provider.
 	TracerProvider trace.TracerProvider
-	MeterProvider  metric.MeterProvider
-	Logger         *slog.Logger
+	// MeterProvider records routed query metrics; nil uses the global provider.
+	MeterProvider metric.MeterProvider
+	// Logger receives routed query debug logs; nil disables logging.
+	Logger *slog.Logger
 }
 
 type databaseStoreConfig struct{ config DatabaseConfig }

@@ -10,6 +10,8 @@ import (
 )
 
 // Builder incrementally assembles and validates an immutable Mesh topology.
+// A Builder is intended for single-goroutine setup; the Mesh returned by Build
+// can be shared by concurrent callers when its configured nodes can be shared.
 type Builder[R any, W Mirrorable[W], SK any] struct {
 	vshards   []*ReplicaSet[R, W]
 	hasher    ShardHasher[SK]
@@ -79,7 +81,9 @@ func (b *Builder[R, W, SK]) Link(vshard uint64, rs *ReplicaSet[R, W]) *Builder[R
 	return b
 }
 
-// Build validates the topology and returns an immutable mesh.
+// Build validates the topology and returns an immutable mesh. It retains the
+// configured node and telemetry providers; callers remain responsible for
+// shutting down database pools and OpenTelemetry SDK providers.
 func (b *Builder[R, W, SK]) Build() (*Mesh[R, W, SK], error) {
 	if b.err != nil {
 		return nil, b.err

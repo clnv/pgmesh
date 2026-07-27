@@ -17,7 +17,8 @@ import (
 const instrumentationName = "github.com/clnv/pgmesh"
 
 // MetricQueryDuration is the OpenTelemetry histogram of routed query durations
-// in seconds. Its count also reports completed query throughput.
+// in seconds. Its count also reports completed query throughput. The configured
+// MeterProvider owns exporting and shutdown; pgmesh never shuts it down.
 const MetricQueryDuration = "pgmesh.query.duration"
 
 // OpenTelemetry attribute keys recorded on routed query telemetry.
@@ -64,7 +65,9 @@ type queryTelemetry struct {
 	logger        *slog.Logger
 }
 
-// QuerySpan records tracing, metrics, and logging for one routed query.
+// QuerySpan records tracing, metrics, and logging for one routed query. The
+// generated store calls End exactly once; callers using StartSpan directly must
+// do the same.
 type QuerySpan struct {
 	ctx           context.Context
 	span          trace.Span
@@ -179,7 +182,7 @@ func (s *QuerySpan) SetRoute(
 }
 
 // End records metrics and a debug log, records err if present, then ends the
-// routed query span.
+// routed query span. The configured providers and logger remain caller-owned.
 func (s *QuerySpan) End(err error) {
 	duration := time.Since(s.started)
 	metricAttributes := append([]attribute.KeyValue(nil), s.attributes...)
