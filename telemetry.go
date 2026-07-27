@@ -10,18 +10,15 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
+	semconv "go.opentelemetry.io/otel/semconv/v1.41.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
 const instrumentationName = "github.com/clnv/pgmesh"
 
-// OpenTelemetry metric instrument names emitted for routed queries.
-const (
-	// MetricQueryCount is the counter for completed routed queries.
-	MetricQueryCount = "pgmesh.query.count"
-	// MetricQueryDuration is the histogram of routed query durations in seconds.
-	MetricQueryDuration = "pgmesh.query.duration"
-)
+// MetricQueryDuration is the OpenTelemetry histogram of routed query durations
+// in seconds. Its count also reports completed query throughput.
+const MetricQueryDuration = "pgmesh.query.duration"
 
 // OpenTelemetry attribute keys recorded on routed query telemetry.
 const (
@@ -29,10 +26,6 @@ const (
 	AttributeQueryName = "pgmesh.query.name"
 	// AttributeQueryKind identifies whether a routed query is a read or write.
 	AttributeQueryKind = "pgmesh.query.kind"
-	// AttributeQueryError reports whether a routed query returned an error.
-	AttributeQueryError = "pgmesh.query.error"
-	// AttributeVShard identifies the selected virtual shard.
-	AttributeVShard = "pgmesh.route.vshard"
 	// AttributeReplicaSet identifies the selected physical replica set.
 	AttributeReplicaSet = "pgmesh.route.replica_set"
 	// AttributeRouteMode identifies the database path selected for a query.
@@ -67,7 +60,6 @@ const (
 
 type queryTelemetry struct {
 	tracer        trace.Tracer
-	queryCount    metric.Int64Counter
 	queryDuration metric.Float64Histogram
 	logger        *slog.Logger
 }
@@ -76,7 +68,6 @@ type queryTelemetry struct {
 type QuerySpan struct {
 	ctx           context.Context
 	span          trace.Span
-	queryCount    metric.Int64Counter
 	queryDuration metric.Float64Histogram
 	started       time.Time
 	attributes    []attribute.KeyValue
@@ -100,35 +91,31 @@ func (t *queryTelemetry) setTracerProvider(provider trace.TracerProvider) {
 	if provider == nil {
 		provider = otel.GetTracerProvider()
 	}
-	t.tracer = provider.Tracer(instrumentationName)
+	t.tracer = provider.Tracer(
+		instrumentationName,
+		trace.WithSchemaURL(semconv.SchemaURL),
+	)
 }
 
 func (t *queryTelemetry) setMeterProvider(provider metric.MeterProvider) error {
 	if provider == nil {
 		provider = otel.GetMeterProvider()
 	}
-	meter := provider.Meter(instrumentationName)
-	queryCount, err := meter.Int64Counter(
-		MetricQueryCount,
-		metric.WithDescription("Number of routed pgmesh queries"),
-		metric.WithUnit("{query}"),
+	meter := provider.Meter(
+		instrumentationName,
+		metric.WithSchemaURL(semconv.SchemaURL),
 	)
-	if err != nil {
-		return err
-	}
 	queryDuration, err := meter.Float64Histogram(
 		MetricQueryDuration,
 		metric.WithDescription("Duration of routed pgmesh queries"),
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(
-			0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5,
-			0.75, 1, 2.5, 5, 7.5, 10,
+			0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10,
 		),
 	)
 	if err != nil {
 		return err
 	}
-	t.queryCount = queryCount
 	t.queryDuration = queryDuration
 	return nil
 }
@@ -156,7 +143,6 @@ func (m *Mesh[R, W, SK]) StartSpan(
 	return ctx, &QuerySpan{
 		ctx:           ctx,
 		span:          span,
-		queryCount:    m.telemetry.queryCount,
 		queryDuration: m.telemetry.queryDuration,
 		started:       time.Now(),
 		attributes:    attributes,
@@ -168,8 +154,8 @@ func (m *Mesh[R, W, SK]) StartSpan(
 	}
 }
 
-// SetRoute records the selected virtual shard, replica set, route mode, and
-// synchronous mirror count.
+// SetRoute records the selected virtual shard for debug logging and the bounded
+// physical-route attributes used by tracing and metrics.
 func (s *QuerySpan) SetRoute(
 	vshard uint64,
 	replicaSet string,
@@ -177,7 +163,6 @@ func (s *QuerySpan) SetRoute(
 	writeMirrorCount int,
 ) {
 	routeAttributes := []attribute.KeyValue{
-		attribute.String(AttributeVShard, strconv.FormatUint(vshard, 10)),
 		attribute.String(AttributeReplicaSet, replicaSet),
 		attribute.String(AttributeRouteMode, string(mode)),
 		attribute.Int(AttributeWriteMirrorCount, writeMirrorCount),
@@ -197,16 +182,15 @@ func (s *QuerySpan) SetRoute(
 // routed query span.
 func (s *QuerySpan) End(err error) {
 	duration := time.Since(s.started)
+	metricAttributes := append([]attribute.KeyValue(nil), s.attributes...)
 	if err != nil {
+		errorType := semconv.ErrorType(err)
 		s.span.RecordError(err)
+		s.span.SetAttributes(errorType)
 		s.span.SetStatus(codes.Error, err.Error())
+		metricAttributes = append(metricAttributes, errorType)
 	}
-	metricAttributes := append(
-		append([]attribute.KeyValue(nil), s.attributes...),
-		attribute.Bool(AttributeQueryError, err != nil),
-	)
 	recordOptions := metric.WithAttributes(metricAttributes...)
-	s.queryCount.Add(s.ctx, 1, recordOptions)
 	s.queryDuration.Record(s.ctx, duration.Seconds(), recordOptions)
 	if s.logger != nil && s.logger.Enabled(s.ctx, slog.LevelDebug) {
 		logAttributes := append(

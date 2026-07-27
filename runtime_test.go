@@ -164,7 +164,8 @@ func TestQueryTelemetryRecordsRoutingAndErrors(t *testing.T) {
 	}
 	assert.Equal(t, "CreateUser", attributes[pgmesh.AttributeQueryName].AsString())
 	assert.Equal(t, "write", attributes[pgmesh.AttributeQueryKind].AsString())
-	assert.Equal(t, "0", attributes[pgmesh.AttributeVShard].AsString())
+	assert.Equal(t, "*errors.errorString", attributes[attribute.Key("error.type")].AsString())
+	assert.NotContains(t, attributes, attribute.Key("pgmesh.route.vshard"))
 	assert.Equal(t, "main", attributes[pgmesh.AttributeReplicaSet].AsString())
 	assert.Equal(t, "primary", attributes[pgmesh.AttributeRouteMode].AsString())
 	assert.Equal(t, int64(1), attributes[pgmesh.AttributeWriteMirrorCount].AsInt64())
@@ -174,26 +175,15 @@ func TestQueryTelemetryRecordsRoutingAndErrors(t *testing.T) {
 	var metrics metricdata.ResourceMetrics
 	require.NoError(t, reader.Collect(t.Context(), &metrics))
 	require.Len(t, metrics.ScopeMetrics, 1)
-	require.Len(t, metrics.ScopeMetrics[0].Metrics, 2)
-	for _, measurement := range metrics.ScopeMetrics[0].Metrics {
-		switch measurement.Name {
-		case pgmesh.MetricQueryCount:
-			data, ok := measurement.Data.(metricdata.Sum[int64])
-			require.True(t, ok)
-			require.Len(t, data.DataPoints, 1)
-			assert.Equal(t, int64(1), data.DataPoints[0].Value)
-			assertMetricAttributes(t, data.DataPoints[0].Attributes.ToSlice())
-		case pgmesh.MetricQueryDuration:
-			data, ok := measurement.Data.(metricdata.Histogram[float64])
-			require.True(t, ok)
-			require.Len(t, data.DataPoints, 1)
-			assert.Equal(t, uint64(1), data.DataPoints[0].Count)
-			assert.GreaterOrEqual(t, data.DataPoints[0].Sum, 0.0)
-			assertMetricAttributes(t, data.DataPoints[0].Attributes.ToSlice())
-		default:
-			t.Fatalf("unexpected metric %q", measurement.Name)
-		}
-	}
+	require.Len(t, metrics.ScopeMetrics[0].Metrics, 1)
+	measurement := metrics.ScopeMetrics[0].Metrics[0]
+	assert.Equal(t, pgmesh.MetricQueryDuration, measurement.Name)
+	data, ok := measurement.Data.(metricdata.Histogram[float64])
+	require.True(t, ok)
+	require.Len(t, data.DataPoints, 1)
+	assert.Equal(t, uint64(1), data.DataPoints[0].Count)
+	assert.GreaterOrEqual(t, data.DataPoints[0].Sum, 0.0)
+	assertMetricAttributes(t, data.DataPoints[0].Attributes.ToSlice())
 
 	var logRecord map[string]any
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(logOutput.Bytes()), &logRecord))
@@ -219,8 +209,8 @@ func assertMetricAttributes(t *testing.T, items []attribute.KeyValue) {
 	}
 	assert.Equal(t, "CreateUser", attributes[pgmesh.AttributeQueryName].AsString())
 	assert.Equal(t, "write", attributes[pgmesh.AttributeQueryKind].AsString())
-	assert.True(t, attributes[pgmesh.AttributeQueryError].AsBool())
-	assert.Equal(t, "0", attributes[pgmesh.AttributeVShard].AsString())
+	assert.Equal(t, "*errors.errorString", attributes[attribute.Key("error.type")].AsString())
+	assert.NotContains(t, attributes, attribute.Key("pgmesh.route.vshard"))
 	assert.Equal(t, "main", attributes[pgmesh.AttributeReplicaSet].AsString())
 	assert.Equal(t, "primary", attributes[pgmesh.AttributeRouteMode].AsString())
 	assert.Equal(t, int64(1), attributes[pgmesh.AttributeWriteMirrorCount].AsInt64())
