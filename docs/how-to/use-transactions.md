@@ -1,7 +1,7 @@
 # Use transactions
 
 A transaction is owned by one PostgreSQL connection. Select the primary pool
-with the same resolver, hasher, and mapping used in `ShardedConfig`, then pass
+with the same resolver, hasher, and mapping used by `Sharded`, then pass
 the transaction to generated `Store` methods.
 
 ## Retain primary pools
@@ -28,7 +28,7 @@ replicaSetName := configuredReplicaSetFor(vshard)
 ```
 
 Keep this placement helper beside topology construction so transaction setup
-and `ShardedConfig` cannot silently diverge.
+and the `Sharded` options cannot silently diverge.
 
 ## Begin on the selected primary
 

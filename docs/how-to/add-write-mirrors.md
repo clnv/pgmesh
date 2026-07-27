@@ -30,16 +30,10 @@ Register the future shard as another replica set. During this phase, the old
 database remains the main replica set:
 
 ```go
-ReplicaSets: []db.ShardDatabaseConfig{
-    {
-        Name:    "old-shard",
-        Primary: oldShardPool,
-    },
-    {
-        Name:    "new-shard",
-        Primary: newShardPool,
-    },
-},
+replicaSetOptions := []db.ShardedOption{
+    db.WithReplicaSet("old-shard", oldShardPool),
+    db.WithReplicaSet("new-shard", newShardPool),
+}
 ```
 
 ## 2. Enable old-to-new dual writes
@@ -47,16 +41,11 @@ ReplicaSets: []db.ShardDatabaseConfig{
 Attach the new database as a mirror of the old main replica set:
 
 ```go
-Shards: pgmesh.Shards{
-    NumVShards: 128,
-    Mappings: []pgmesh.VShardMapping{
-        {
-            VShards:           pgmesh.VShardRange(0, 128),
-            MainReplicaSet:    "old-shard",
-            MirrorReplicaSets: []string{"new-shard"},
-        },
-    },
-},
+mappingOption := db.WithVShardMapping(
+    "old-shard",
+    pgmesh.VShardRange(0, 128),
+    "new-shard",
+)
 ```
 
 After this deployment, each generated non-transactional write runs on
@@ -119,15 +108,10 @@ Before routing reads or authoritative writes to the new database, verify:
 Change the mapping so the new replica set becomes main:
 
 ```go
-Shards: pgmesh.Shards{
-    NumVShards: 128,
-    Mappings: []pgmesh.VShardMapping{
-        {
-            VShards:        pgmesh.VShardRange(0, 128),
-            MainReplicaSet: "new-shard",
-        },
-    },
-},
+mappingOption := db.WithVShardMapping(
+    "new-shard",
+    pgmesh.VShardRange(0, 128),
+)
 ```
 
 Deploying this topology switches both reads and writes to the new database.
@@ -137,11 +121,11 @@ previous verification completes.
 For a rollback window, make `old-shard` a mirror of `new-shard` during cutover:
 
 ```go
-{
-    VShards:           pgmesh.VShardRange(0, 128),
-    MainReplicaSet:    "new-shard",
-    MirrorReplicaSets: []string{"old-shard"},
-}
+mappingOption := db.WithVShardMapping(
+    "new-shard",
+    pgmesh.VShardRange(0, 128),
+    "old-shard",
+)
 ```
 
 This reverses the dual-write direction and keeps the old database current while

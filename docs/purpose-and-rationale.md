@@ -31,17 +31,18 @@ func loadAccount(ctx context.Context, store db.Store, arg *db.GetAccountParams) 
 }
 ```
 
-`NewStore(ctx, config)` chooses the internal implementation. `DatabaseConfig`
-supports one primary, optional read replicas, and optional write mirrors.
-`ShardedConfig` adds virtual-shard mappings and a generated `ShardResolver`.
-Both configurations return the same `Store`.
+`NewStore(ctx, topology, options...)` chooses the internal implementation.
+`Singleton` accepts one primary plus functional options for read replicas and
+write mirrors. `Sharded` accepts the virtual-shard count, hasher, generated
+`ShardResolver`, and functional options for replica sets and mappings. Both
+topologies return the same `Store`.
 
 | Capability | Configuration |
 | --- | --- |
-| Single database | `DatabaseConfig{Primary: pool}` |
-| Read/write separation | Add `DatabaseConfig.Replicas` |
-| Sharding | Use `ShardedConfig` when every query has a `shard` annotation |
-| Write mirrors | Add `DatabaseConfig.Mirrors` or sharded mirror mappings |
+| Single database | `Singleton(pool)` |
+| Read/write separation | Add `WithReadReplicas(...)` |
+| Sharding | Use `Sharded(...)` when every query has a `shard` annotation |
+| Write mirrors | Add `WithWriteMirrors(...)` or sharded mirror mappings |
 | Transactions | Pass the same generated `WithTx(tx)` query option |
 
 The generated read, write, one-database, replica-set, and sharded executors are
@@ -123,6 +124,6 @@ pgmesh fits applications that already want sqlc and pgx/v5, need explicit
 read/write separation, and prefer routing inside the Go type system rather than
 behind a transparent database proxy.
 
-Start with `DatabaseConfig{Primary: pool}`. Replicas, mirrors, and sharding can
+Start with `Singleton(pool)`. Replicas, mirrors, and sharding can
 then be introduced by changing construction without changing SQL method
 definitions or application query interfaces.

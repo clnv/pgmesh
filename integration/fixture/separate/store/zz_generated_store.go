@@ -77,42 +77,104 @@ func newStoreNode(database db.DBTX) pgmesh.Node[*readQueries, *queryStore] {
 	return pgmesh.NewNode(newReadQueries(queries), newQueryStore(queries))
 }
 
-// StoreConfig is an opaque database-topology configuration for Store.
-type StoreConfig interface {
-	buildStore(context.Context) (Store, error)
+type storeOptions struct {
+	tracerProvider trace.TracerProvider
+	meterProvider  metric.MeterProvider
+	logger         *slog.Logger
 }
 
-// DatabaseConfig configures a single primary, optional read replicas, and optional write mirrors.
-type DatabaseConfig struct {
-	// Name identifies the database in telemetry; empty defaults to "default".
-	Name string
-	// Primary serves writes and explicit primary reads. The caller owns its lifecycle.
-	Primary db.DBTX
-	// Replicas serve ordinary reads in round-robin order. The caller owns their lifecycles.
-	Replicas []db.DBTX
-	// Mirrors synchronously receive writes in slice order after the primary succeeds.
-	Mirrors []db.DBTX
-	// TracerProvider records routed query spans; nil uses the global provider.
-	TracerProvider trace.TracerProvider
-	// MeterProvider records routed query metrics; nil uses the global provider.
-	MeterProvider metric.MeterProvider
-	// Logger receives routed query debug logs; nil disables logging.
-	Logger *slog.Logger
+// StoreOption customizes telemetry for a generated store.
+type StoreOption func(*storeOptions)
+
+// WithTracerProvider configures the provider used for routed query spans.
+// A nil provider uses the global OpenTelemetry tracer provider.
+func WithTracerProvider(provider trace.TracerProvider) StoreOption {
+	return func(options *storeOptions) { options.tracerProvider = provider }
 }
 
-type databaseStoreConfig struct{ config DatabaseConfig }
+// WithMeterProvider configures the provider used for routed query metrics.
+// A nil provider uses the global OpenTelemetry meter provider.
+func WithMeterProvider(provider metric.MeterProvider) StoreOption {
+	return func(options *storeOptions) { options.meterProvider = provider }
+}
 
-// Database returns an opaque configuration for a non-sharded store.
-func Database(config DatabaseConfig) StoreConfig {
-	return databaseStoreConfig{config: config}
+// WithLogger configures optional structured logging for routed queries.
+// A nil logger disables logging.
+func WithLogger(logger *slog.Logger) StoreOption {
+	return func(options *storeOptions) { options.logger = logger }
+}
+
+func applyStoreOptions(options ...StoreOption) (storeOptions, error) {
+	var result storeOptions
+	for index, option := range options {
+		if option == nil {
+			return storeOptions{}, fmt.Errorf("pgmesh: store option %d is nil", index)
+		}
+		option(&result)
+	}
+	return result, nil
+}
+
+// Topology is an opaque database topology for Store.
+type Topology interface {
+	buildStore(context.Context, storeOptions) (Store, error)
+}
+
+type singletonConfig struct {
+	name     string
+	primary  db.DBTX
+	replicas []db.DBTX
+	mirrors  []db.DBTX
+}
+
+// SingletonOption customizes a single-database topology.
+type SingletonOption func(*singletonConfig)
+
+// WithDatabaseName identifies the database in telemetry.
+// An empty name defaults to "default".
+func WithDatabaseName(name string) SingletonOption {
+	return func(config *singletonConfig) { config.name = name }
+}
+
+// WithReadReplicas appends databases used for round-robin reads.
+func WithReadReplicas(databases ...db.DBTX) SingletonOption {
+	replicas := append([]db.DBTX(nil), databases...)
+	return func(config *singletonConfig) { config.replicas = append(config.replicas, replicas...) }
+}
+
+// WithWriteMirrors appends databases that synchronously receive writes.
+func WithWriteMirrors(databases ...db.DBTX) SingletonOption {
+	mirrors := append([]db.DBTX(nil), databases...)
+	return func(config *singletonConfig) { config.mirrors = append(config.mirrors, mirrors...) }
+}
+
+type singletonTopology struct {
+	config singletonConfig
+	err    error
+}
+
+// Singleton returns a topology with one primary database.
+func Singleton(primary db.DBTX, options ...SingletonOption) Topology {
+	config := singletonConfig{name: "default", primary: primary}
+	for index, option := range options {
+		if option == nil {
+			return singletonTopology{err: fmt.Errorf("pgmesh: singleton option %d is nil", index)}
+		}
+		option(&config)
+	}
+	return singletonTopology{config: config}
 }
 
 // NewStore creates the generated query API from an opaque topology configuration.
-func NewStore(ctx context.Context, config StoreConfig) (Store, error) {
-	if config == nil {
-		return nil, fmt.Errorf("pgmesh: store config is nil")
+func NewStore(ctx context.Context, topology Topology, options ...StoreOption) (Store, error) {
+	if topology == nil {
+		return nil, fmt.Errorf("pgmesh: topology is nil")
 	}
-	return config.buildStore(ctx)
+	storeOptions, err := applyStoreOptions(options...)
+	if err != nil {
+		return nil, err
+	}
+	return topology.buildStore(ctx, storeOptions)
 }
 
 type meshStore[SK any] struct {
@@ -122,40 +184,43 @@ type meshStore[SK any] struct {
 
 var _ Store = (*meshStore[uint8])(nil)
 
-func (c databaseStoreConfig) buildStore(_ context.Context) (Store, error) {
-	config := c.config
-	if config.Name == "" {
-		config.Name = "default"
+func (c singletonTopology) buildStore(_ context.Context, options storeOptions) (Store, error) {
+	if c.err != nil {
+		return nil, c.err
 	}
-	if config.Primary == nil {
+	config := c.config
+	if config.name == "" {
+		config.name = "default"
+	}
+	if config.primary == nil {
 		return nil, fmt.Errorf("pgmesh: database primary is nil")
 	}
-	for index, database := range config.Replicas {
+	for index, database := range config.replicas {
 		if database == nil {
 			return nil, fmt.Errorf("pgmesh: database replica %d is nil", index)
 		}
 	}
-	for index, database := range config.Mirrors {
+	for index, database := range config.mirrors {
 		if database == nil {
 			return nil, fmt.Errorf("pgmesh: database mirror %d is nil", index)
 		}
 	}
-	primary := newStoreNode(config.Primary)
-	replicas := make([]pgmesh.Node[*readQueries, *queryStore], 0, len(config.Replicas))
-	for _, database := range config.Replicas {
+	primary := newStoreNode(config.primary)
+	replicas := make([]pgmesh.Node[*readQueries, *queryStore], 0, len(config.replicas))
+	for _, database := range config.replicas {
 		replicas = append(replicas, newStoreNode(database))
 	}
-	replicaSet := pgmesh.NewReplicaSet(config.Name, primary, replicas)
-	mirrors := make([]*queryStore, 0, len(config.Mirrors))
-	for _, database := range config.Mirrors {
+	replicaSet := pgmesh.NewReplicaSet(config.name, primary, replicas)
+	mirrors := make([]*queryStore, 0, len(config.mirrors))
+	for _, database := range config.mirrors {
 		mirrors = append(mirrors, newStoreNode(database).Writer())
 	}
 	replicaSet = replicaSet.WithWriteMirrors(mirrors...)
 	mesh, err := pgmesh.NewBuilder[*readQueries, *queryStore, uint8](1).
 		WithHasher(pgmesh.ConstantShardHashFor[uint8](0)).
-		WithTracerProvider(config.TracerProvider).
-		WithMeterProvider(config.MeterProvider).
-		WithLogger(config.Logger).
+		WithTracerProvider(options.tracerProvider).
+		WithMeterProvider(options.meterProvider).
+		WithLogger(options.logger).
 		Link(0, replicaSet).
 		Build()
 	if err != nil {

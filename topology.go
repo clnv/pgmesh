@@ -10,58 +10,95 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Connection identifies a database node by its connection string.
-type Connection struct {
-	// DSN is the PostgreSQL data source name passed to Options.CreateNode.
-	DSN string
+// NodeFactory opens the database node identified by a DSN. Nodes and their
+// underlying pools remain caller-owned; pgmesh does not close them.
+type NodeFactory[R any, W Mirrorable[W]] func(context.Context, string) (Node[R, W], error)
+
+type connection struct {
+	dsn string
 }
 
-// ReplicaSetSpec describes a primary database and its read replicas.
-type ReplicaSetSpec struct {
-	// Name uniquely identifies the replica set within a topology.
-	Name string
-	// Primary is the replica set's writable database node.
-	Primary Connection
-	// Replicas are read-only nodes used for round-robin reads.
-	Replicas []Connection
+type replicaSetSpec struct {
+	name     string
+	primary  connection
+	replicas []connection
 }
 
-// Shards describes the virtual-shard topology and its physical mappings.
-type Shards struct {
-	// NumVShards is the total number of virtual shards in the topology.
-	NumVShards uint64
-	// Mappings assign every virtual shard to a physical replica set.
-	Mappings []VShardMapping
+type vshardMapping struct {
+	vshards           []uint64
+	mainReplicaSet    string
+	mirrorReplicaSets []string
 }
 
-// VShardMapping assigns virtual shards to a main replica set and write mirrors.
-type VShardMapping struct {
-	// VShards are the virtual shard indexes covered by this mapping.
-	VShards []uint64
-	// MainReplicaSet names the replica set that serves reads and primary writes.
-	MainReplicaSet string
-	// MirrorReplicaSets name replica sets that synchronously receive writes.
-	MirrorReplicaSets []string
+type meshConfig struct {
+	replicaSets    []replicaSetSpec
+	numVShards     uint64
+	mappings       []vshardMapping
+	tracerProvider trace.TracerProvider
+	meterProvider  metric.MeterProvider
+	logger         *slog.Logger
 }
 
-// Options configures declarative mesh construction.
-type Options[R any, W Mirrorable[W], SK any] struct {
-	// ReplicaSets define the physical database nodes in the topology.
-	ReplicaSets []ReplicaSetSpec
-	// Shards defines virtual shard placement and write mirrors.
-	Shards Shards
+// MeshOption customizes a declaratively constructed mesh.
+type MeshOption func(*meshConfig)
 
-	// CreateNode opens the node identified by a DSN. Nodes and their underlying
-	// pools remain caller-owned; pgmesh does not close them.
-	CreateNode func(context.Context, string) (Node[R, W], error)
-	// ShardHasher maps application shard keys to virtual shard indexes.
-	ShardHasher ShardHasher[SK]
-	// TracerProvider records routed query spans; nil uses the global provider.
-	TracerProvider trace.TracerProvider
-	// MeterProvider records routed query metrics; nil uses the global provider.
-	MeterProvider metric.MeterProvider
-	// Logger receives routed query debug logs; nil disables logging.
-	Logger *slog.Logger
+// WithReplicaSet registers a named primary and its optional read replicas.
+// Repeated calls append replica sets in call order.
+func WithReplicaSet(name, primaryDSN string, replicaDSNs ...string) MeshOption {
+	replicas := append([]string(nil), replicaDSNs...)
+	return func(config *meshConfig) {
+		spec := replicaSetSpec{
+			name:     name,
+			primary:  connection{dsn: primaryDSN},
+			replicas: make([]connection, 0, len(replicas)),
+		}
+		for _, dsn := range replicas {
+			spec.replicas = append(spec.replicas, connection{dsn: dsn})
+		}
+		config.replicaSets = append(config.replicaSets, spec)
+	}
+}
+
+// WithVShardMapping maps virtual shards to a main replica set and optional
+// ordered write mirrors. Repeated calls append mappings in call order.
+func WithVShardMapping(
+	mainReplicaSet string,
+	vshards []uint64,
+	mirrorReplicaSets ...string,
+) MeshOption {
+	shards := append([]uint64(nil), vshards...)
+	mirrors := append([]string(nil), mirrorReplicaSets...)
+	return func(config *meshConfig) {
+		config.mappings = append(config.mappings, vshardMapping{
+			vshards:           append([]uint64(nil), shards...),
+			mainReplicaSet:    mainReplicaSet,
+			mirrorReplicaSets: append([]string(nil), mirrors...),
+		})
+	}
+}
+
+// WithTracerProvider configures the provider used for routed query spans.
+// A nil provider uses the global OpenTelemetry tracer provider.
+func WithTracerProvider(provider trace.TracerProvider) MeshOption {
+	return func(config *meshConfig) {
+		config.tracerProvider = provider
+	}
+}
+
+// WithMeterProvider configures the provider used for routed query metrics.
+// A nil provider uses the global OpenTelemetry meter provider.
+func WithMeterProvider(provider metric.MeterProvider) MeshOption {
+	return func(config *meshConfig) {
+		config.meterProvider = provider
+	}
+}
+
+// WithLogger configures optional structured logging for routed queries.
+// A nil logger disables logging.
+func WithLogger(logger *slog.Logger) MeshOption {
+	return func(config *meshConfig) {
+		config.logger = logger
+	}
 }
 
 // VShardRange returns the half-open virtual shard range [from, to).
@@ -76,106 +113,127 @@ func VShardRange(from, to uint64) []uint64 {
 	return out
 }
 
-// CreateMesh validates opts, opens its database nodes, and builds an immutable
-// mesh. It calls CreateNode once for each primary and replica, in ReplicaSets
-// order, and stops at the first error. Successfully created nodes are not closed
-// on a later error and remain caller-owned.
+// CreateMesh validates its configuration, opens its database nodes, and builds
+// an immutable mesh. It calls createNode once for each primary and replica, in
+// option order, and stops at the first error. Successfully created nodes are
+// not closed on a later error and remain caller-owned.
 func CreateMesh[R any, W Mirrorable[W], SK any](
 	ctx context.Context,
-	opts *Options[R, W, SK],
+	numVShards uint64,
+	createNode NodeFactory[R, W],
+	shardHasher ShardHasher[SK],
+	options ...MeshOption,
 ) (*Mesh[R, W, SK], error) {
-	if err := validateOptions(opts); err != nil {
+	config := meshConfig{
+		replicaSets:    nil,
+		numVShards:     numVShards,
+		mappings:       nil,
+		tracerProvider: nil,
+		meterProvider:  nil,
+		logger:         nil,
+	}
+	for index, option := range options {
+		if option == nil {
+			return nil, fmt.Errorf("pgmesh: mesh option %d is nil", index)
+		}
+		option(&config)
+	}
+	if err := validateMeshConfig(&config, createNode, shardHasher); err != nil {
 		return nil, err
 	}
 
-	replicaSets := make(map[string]*ReplicaSet[R, W], len(opts.ReplicaSets))
-	for _, spec := range opts.ReplicaSets {
-		primary, err := opts.CreateNode(ctx, spec.Primary.DSN)
+	replicaSets := make(map[string]*ReplicaSet[R, W], len(config.replicaSets))
+	for _, spec := range config.replicaSets {
+		primary, err := createNode(ctx, spec.primary.dsn)
 		if err != nil {
-			return nil, fmt.Errorf("create primary node for replica set %q: %w", spec.Name, err)
+			return nil, fmt.Errorf("create primary node for replica set %q: %w", spec.name, err)
 		}
-		replicas := make([]Node[R, W], 0, len(spec.Replicas))
-		for _, connection := range spec.Replicas {
-			replica, err := opts.CreateNode(ctx, connection.DSN)
+		replicas := make([]Node[R, W], 0, len(spec.replicas))
+		for _, connection := range spec.replicas {
+			replica, err := createNode(ctx, connection.dsn)
 			if err != nil {
-				return nil, fmt.Errorf("create replica node for replica set %q: %w", spec.Name, err)
+				return nil, fmt.Errorf("create replica node for replica set %q: %w", spec.name, err)
 			}
 			replicas = append(replicas, replica)
 		}
-		replicaSets[spec.Name] = NewReplicaSet(spec.Name, primary, replicas)
+		replicaSets[spec.name] = NewReplicaSet(spec.name, primary, replicas)
 	}
 
 	configured := make(map[string]*ReplicaSet[R, W], len(replicaSets))
-	for _, mapping := range opts.Shards.Mappings {
-		if _, ok := configured[mapping.MainReplicaSet]; ok {
+	for _, mapping := range config.mappings {
+		if _, ok := configured[mapping.mainReplicaSet]; ok {
 			continue
 		}
-		main := replicaSets[mapping.MainReplicaSet]
-		mirrors := make([]W, 0, len(mapping.MirrorReplicaSets))
-		for _, name := range mapping.MirrorReplicaSets {
+		main := replicaSets[mapping.mainReplicaSet]
+		mirrors := make([]W, 0, len(mapping.mirrorReplicaSets))
+		for _, name := range mapping.mirrorReplicaSets {
 			mirrors = append(mirrors, replicaSets[name].primaryWriter())
 		}
-		configured[mapping.MainReplicaSet] = main.WithWriteMirrors(mirrors...)
+		configured[mapping.mainReplicaSet] = main.WithWriteMirrors(mirrors...)
 	}
 
-	builder := NewBuilder[R, W, SK](opts.Shards.NumVShards).
-		WithHasher(opts.ShardHasher).
-		WithTracerProvider(opts.TracerProvider).
-		WithMeterProvider(opts.MeterProvider).
-		WithLogger(opts.Logger)
-	for _, mapping := range opts.Shards.Mappings {
-		for _, vshard := range mapping.VShards {
-			builder.Link(vshard, configured[mapping.MainReplicaSet])
+	builder := NewBuilder[R, W, SK](config.numVShards).
+		WithHasher(shardHasher).
+		WithTracerProvider(config.tracerProvider).
+		WithMeterProvider(config.meterProvider).
+		WithLogger(config.logger)
+	for _, mapping := range config.mappings {
+		for _, vshard := range mapping.vshards {
+			builder.Link(vshard, configured[mapping.mainReplicaSet])
 		}
 	}
 	return builder.Build()
 }
 
-func validateOptions[R any, W Mirrorable[W], SK any](opts *Options[R, W, SK]) error {
-	if opts == nil || len(opts.ReplicaSets) == 0 {
+func validateMeshConfig[R any, W Mirrorable[W], SK any](
+	config *meshConfig,
+	createNode NodeFactory[R, W],
+	shardHasher ShardHasher[SK],
+) error {
+	if len(config.replicaSets) == 0 {
 		return ErrNoReplicaSets
 	}
-	if opts.CreateNode == nil {
+	if createNode == nil {
 		return ErrNoNodeFactory
 	}
-	if opts.ShardHasher == nil {
+	if shardHasher == nil {
 		return ErrNoShardHasher
 	}
-	if opts.Shards.NumVShards == 0 {
+	if config.numVShards == 0 {
 		return ErrNoVShards
 	}
 
-	names := make(map[string]struct{}, len(opts.ReplicaSets))
-	for _, spec := range opts.ReplicaSets {
-		if strings.TrimSpace(spec.Name) == "" {
+	names := make(map[string]struct{}, len(config.replicaSets))
+	for _, spec := range config.replicaSets {
+		if strings.TrimSpace(spec.name) == "" {
 			return ErrEmptyReplicaSetName
 		}
-		if _, ok := names[spec.Name]; ok {
-			return fmt.Errorf("%w: %q", ErrDuplicateReplicaSet, spec.Name)
+		if _, ok := names[spec.name]; ok {
+			return fmt.Errorf("%w: %q", ErrDuplicateReplicaSet, spec.name)
 		}
-		names[spec.Name] = struct{}{}
-		if strings.TrimSpace(spec.Primary.DSN) == "" {
-			return fmt.Errorf("%w: primary of %q", ErrEmptyDSN, spec.Name)
+		names[spec.name] = struct{}{}
+		if strings.TrimSpace(spec.primary.dsn) == "" {
+			return fmt.Errorf("%w: primary of %q", ErrEmptyDSN, spec.name)
 		}
-		for index, replica := range spec.Replicas {
-			if strings.TrimSpace(replica.DSN) == "" {
-				return fmt.Errorf("%w: replica %d of %q", ErrEmptyDSN, index, spec.Name)
+		for index, replica := range spec.replicas {
+			if strings.TrimSpace(replica.dsn) == "" {
+				return fmt.Errorf("%w: replica %d of %q", ErrEmptyDSN, index, spec.name)
 			}
 		}
 	}
 
-	linked := make([]bool, opts.Shards.NumVShards)
+	linked := make([]bool, config.numVShards)
 	mirrorConfigurations := make(map[string]string)
-	for _, mapping := range opts.Shards.Mappings {
-		if _, ok := names[mapping.MainReplicaSet]; !ok {
-			return fmt.Errorf("%w: main %q", ErrUnknownReplicaSet, mapping.MainReplicaSet)
+	for _, mapping := range config.mappings {
+		if _, ok := names[mapping.mainReplicaSet]; !ok {
+			return fmt.Errorf("%w: main %q", ErrUnknownReplicaSet, mapping.mainReplicaSet)
 		}
-		seenMirrors := make(map[string]struct{}, len(mapping.MirrorReplicaSets))
-		for _, mirror := range mapping.MirrorReplicaSets {
+		seenMirrors := make(map[string]struct{}, len(mapping.mirrorReplicaSets))
+		for _, mirror := range mapping.mirrorReplicaSets {
 			if _, ok := names[mirror]; !ok {
 				return fmt.Errorf("%w: mirror %q", ErrUnknownReplicaSet, mirror)
 			}
-			if mirror == mapping.MainReplicaSet {
+			if mirror == mapping.mainReplicaSet {
 				return fmt.Errorf("%w: replica set %q cannot mirror itself", ErrMirrorConfiguration, mirror)
 			}
 			if _, ok := seenMirrors[mirror]; ok {
@@ -183,14 +241,14 @@ func validateOptions[R any, W Mirrorable[W], SK any](opts *Options[R, W, SK]) er
 			}
 			seenMirrors[mirror] = struct{}{}
 		}
-		configuration := strings.Join(mapping.MirrorReplicaSets, "\x00")
-		if previous, ok := mirrorConfigurations[mapping.MainReplicaSet]; ok && previous != configuration {
-			return fmt.Errorf("%w for %q", ErrMirrorConfiguration, mapping.MainReplicaSet)
+		configuration := strings.Join(mapping.mirrorReplicaSets, "\x00")
+		if previous, ok := mirrorConfigurations[mapping.mainReplicaSet]; ok && previous != configuration {
+			return fmt.Errorf("%w for %q", ErrMirrorConfiguration, mapping.mainReplicaSet)
 		}
-		mirrorConfigurations[mapping.MainReplicaSet] = configuration
+		mirrorConfigurations[mapping.mainReplicaSet] = configuration
 
-		for _, vshard := range mapping.VShards {
-			if vshard >= opts.Shards.NumVShards {
+		for _, vshard := range mapping.vshards {
+			if vshard >= config.numVShards {
 				return fmt.Errorf("%w: %d", ErrVShardOutOfRange, vshard)
 			}
 			if linked[vshard] {

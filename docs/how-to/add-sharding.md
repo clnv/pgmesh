@@ -47,15 +47,9 @@ Each replica set represents one physical shard. Start with one primary per
 set; replicas and mirrors can be added separately.
 
 ```go
-replicaSets := []db.ShardDatabaseConfig{
-    {
-        Name:    "shard-0",
-        Primary: shard0Pool,
-    },
-    {
-        Name:    "shard-1",
-        Primary: shard1Pool,
-    },
+replicaSetOptions := []db.ShardedOption{
+    db.WithReplicaSet("shard-0", shard0Pool),
+    db.WithReplicaSet("shard-1", shard1Pool),
 }
 ```
 
@@ -65,15 +59,9 @@ lifecycle.
 ## 4. Map every virtual shard exactly once
 
 ```go
-mappings := []pgmesh.VShardMapping{
-    {
-        VShards:        pgmesh.VShardRange(0, 64),
-        MainReplicaSet: "shard-0",
-    },
-    {
-        VShards:        pgmesh.VShardRange(64, 128),
-        MainReplicaSet: "shard-1",
-    },
+mappingOptions := []db.ShardedOption{
+    db.WithVShardMapping("shard-0", pgmesh.VShardRange(0, 64)),
+    db.WithVShardMapping("shard-1", pgmesh.VShardRange(64, 128)),
 }
 ```
 
@@ -91,15 +79,16 @@ while the new database is backfilled and verified, then change the mapping.
 ## 5. Construct the same Store interface
 
 ```go
-queries, err := db.NewStore(ctx, db.Sharded(db.ShardedConfig[uint64]{
-    ReplicaSets: replicaSets,
-    Shards: pgmesh.Shards{
-        NumVShards: numVShards,
-        Mappings:   mappings,
-    },
-    ShardHasher: hasher,
-    Resolver:    tenantResolver{},
-}))
+topologyOptions := append(replicaSetOptions, mappingOptions...)
+queries, err := db.NewStore(
+    ctx,
+    db.Sharded(
+        numVShards,
+        hasher,
+        tenantResolver{},
+        topologyOptions...,
+    ),
+)
 if err != nil {
     return err
 }

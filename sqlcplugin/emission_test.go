@@ -126,17 +126,18 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 	store := generatedFileContents(t, resp, "store_querier.go")
 	assert.Contains(t, store, "type meshStore[SK any] struct")
 	assert.NotContains(t, store, "defaultShardKey")
-	assert.Contains(t, store, "func NewStore(ctx context.Context, config StoreConfig) (Store, error)")
-	assert.Contains(t, store, "func Database(config DatabaseConfig) StoreConfig")
-	assert.Contains(t, store, `// Name identifies the database in telemetry; empty defaults to "default".`)
-	assert.Contains(t, store, "// Primary serves writes and explicit primary reads. The caller owns its lifecycle.")
-	assert.Contains(t, store, "// Mirrors synchronously receive writes in slice order after the primary succeeds.")
+	assert.Contains(t, store, "func NewStore(ctx context.Context, topology Topology, options ...StoreOption) (Store, error)")
+	assert.Contains(t, store, "func Singleton(primary DBTX, options ...SingletonOption) Topology")
+	assert.Contains(t, store, "// WithDatabaseName identifies the database in telemetry.")
+	assert.Contains(t, store, "// WithReadReplicas appends databases used for round-robin reads.")
+	assert.Contains(t, store, "// WithWriteMirrors appends databases that synchronously receive writes.")
 	assert.NotContains(t, store, "type OneStore")
 	assert.NotContains(t, store, "type ShardedStore")
 	assert.NotContains(t, generatedSource(resp), "oneStore")
 
 	sharded := generatedFileContents(t, resp, "store_querier_sharded.go")
 	assert.NotContains(t, sharded, "type ShardedConfig")
+	assert.NotContains(t, sharded, "type ShardDatabaseConfig")
 
 	got := generatedSource(resp)
 	assert.Contains(
@@ -444,9 +445,11 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 	require.NoError(t, err)
 	got := generatedSource(response)
 	checks := []string{
-		`func NewStore(ctx context.Context, config StoreConfig) (Store, error)`,
-		`func Database(config DatabaseConfig) StoreConfig`,
-		`func Sharded[SK any](config ShardedConfig[SK]) StoreConfig`,
+		`func NewStore(ctx context.Context, topology Topology, options ...StoreOption) (Store, error)`,
+		`func Singleton(primary DBTX, options ...SingletonOption) Topology`,
+		`func Sharded[SK any](numVShards uint64, shardHasher pgmesh.ShardHasher[SK], resolver ShardResolver[SK], options ...ShardedOption) Topology`,
+		`func WithReplicaSet(name string, primary DBTX, replicas ...DBTX) ShardedOption`,
+		`func WithVShardMapping(mainReplicaSet string, vshards []uint64, mirrorReplicaSets ...string) ShardedOption`,
 		`func newStoreNode(database DBTX) pgmesh.Node[*readQueries, *queryStore]`,
 		"type ShardResolver[SK any] interface {\n\t// P2P resolves the \"p2p\" shard route.\n" +
 			"\tP2P(userID int64, peerID int64) SK\n}",
@@ -574,7 +577,11 @@ func TestGenerateEmptyQuerySetStillEmitsStoreConfiguration(t *testing.T) {
 		PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5"}`),
 	})
 	require.NoError(t, err)
-	assert.Contains(t, generatedSource(response), "func NewStore(ctx context.Context, config StoreConfig) (Store, error)")
+	assert.Contains(
+		t,
+		generatedSource(response),
+		"func NewStore(ctx context.Context, topology Topology, options ...StoreOption) (Store, error)",
+	)
 }
 
 func TestGenerateRejectsInvalidRoutingConfigurations(t *testing.T) {

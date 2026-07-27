@@ -175,8 +175,12 @@ func TestGenerateRetainsPublicNamesAndFixedInternals(t *testing.T) {
 	source := generatedSource(response)
 	assert.Contains(t, source, "type QueryAPI interface")
 	assert.Contains(t, source, "type Router[SK any] interface")
-	assert.Contains(t, source, "func BuildStore(ctx context.Context, config StoreConfig) (QueryAPI, error)")
-	assert.Contains(t, source, "func BuildSharded[SK any](config ShardedConfig[SK]) StoreConfig")
+	assert.Contains(t, source, "func BuildStore(ctx context.Context, topology Topology, options ...StoreOption) (QueryAPI, error)")
+	assert.Contains(
+		t,
+		source,
+		"func BuildSharded[SK any](numVShards uint64, shardHasher pgmesh.ShardHasher[SK], resolver Router[SK], options ...ShardedOption) Topology",
+	)
 	assert.Contains(t, source, "type queryStore struct")
 	assert.Contains(t, source, "type readQueries struct")
 	assert.Contains(t, source, "type writeQueries struct")
@@ -229,7 +233,7 @@ func TestParseOptionsValidation(t *testing.T) {
 		},
 		{
 			name:    "generated name conflict",
-			options: `{"constructor":"Database"}`,
+			options: `{"constructor":"Singleton"}`,
 			want:    "conflicts with a generated declaration",
 		},
 		{

@@ -62,15 +62,14 @@ func (p *databasePools) close() {
 }
 
 func newAccountsStore(ctx context.Context, pools *databasePools) (sharded.Store, error) {
-	return sharded.NewStore(ctx, sharded.Database(sharded.DatabaseConfig{
-		Name:           "accounts",
-		Primary:        pools.primary,
-		Replicas:       []sharded.DBTX{pools.replica},
-		Mirrors:        nil,
-		TracerProvider: nil,
-		MeterProvider:  nil,
-		Logger:         nil,
-	}))
+	return sharded.NewStore(
+		ctx,
+		sharded.Singleton(
+			pools.primary,
+			sharded.WithDatabaseName("accounts"),
+			sharded.WithReadReplicas(pools.replica),
+		),
+	)
 }
 
 func writeAccount(

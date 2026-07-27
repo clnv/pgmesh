@@ -1,18 +1,22 @@
 # Add read replicas
 
 pgmesh treats replication as deployment infrastructure. Configure and monitor
-PostgreSQL replication first, then add the replica pools to `DatabaseConfig`.
+PostgreSQL replication first, then pass the replica pools with
+`WithReadReplicas`.
 
 ## Configure the store
 
 Application query code continues to use `db.Store`:
 
 ```go
-store, err := db.NewStore(ctx, db.Database(db.DatabaseConfig{
-    Name:     "accounts",
-    Primary:  primaryPool,
-    Replicas: []db.DBTX{replica0Pool, replica1Pool},
-}))
+store, err := db.NewStore(
+    ctx,
+    db.Singleton(
+        primaryPool,
+        db.WithDatabaseName("accounts"),
+        db.WithReadReplicas(replica0Pool, replica1Pool),
+    ),
+)
 ```
 
 ## Routing behavior

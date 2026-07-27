@@ -20,15 +20,16 @@ meterProvider := sdkmetric.NewMeterProvider(
 )
 defer meterProvider.Shutdown(context.Background())
 
-store, err := db.NewStore(ctx, db.Database(db.DatabaseConfig{
-    Primary:        pool,
-    TracerProvider: tracerProvider,
-    MeterProvider:  meterProvider,
-}))
+store, err := db.NewStore(
+    ctx,
+    db.Singleton(pool),
+    db.WithTracerProvider(tracerProvider),
+    db.WithMeterProvider(meterProvider),
+)
 ```
 
-`ShardedConfig` has the same provider fields. If providers are not supplied,
-pgmesh uses OpenTelemetry's global providers, so applications that call
+The store options apply to both singleton and sharded topologies. If providers
+are not supplied, pgmesh uses OpenTelemetry's global providers, so applications that call
 `otel.SetTracerProvider` and
 `otel.SetMeterProvider` need no pgmesh-specific options. When no SDK is
 configured, OpenTelemetry's default providers are no-ops. The application owns

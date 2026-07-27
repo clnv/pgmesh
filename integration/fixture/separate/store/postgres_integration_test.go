@@ -41,10 +41,10 @@ func TestSeparatePackageStoreAgainstPostgres(t *testing.T) {
 	tx, err := pool.Begin(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
-	queries, err := store.NewStore(t.Context(), store.Database(store.DatabaseConfig{
-		Name:    "separate-package",
-		Primary: tx,
-	}))
+	queries, err := store.NewStore(
+		t.Context(),
+		store.Singleton(tx, store.WithDatabaseName("separate-package")),
+	)
 	require.NoError(t, err)
 
 	created, err := queries.CreateUser(

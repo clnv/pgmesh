@@ -25,15 +25,10 @@ func run(ctx context.Context) error {
 	}
 	defer pool.Close()
 
-	queries, err := sharded.NewStore(ctx, sharded.Database(sharded.DatabaseConfig{
-		Name:           "accounts",
-		Primary:        pool,
-		Replicas:       nil,
-		Mirrors:        nil,
-		TracerProvider: nil,
-		MeterProvider:  nil,
-		Logger:         nil,
-	}))
+	queries, err := sharded.NewStore(
+		ctx,
+		sharded.Singleton(pool, sharded.WithDatabaseName("accounts")),
+	)
 	if err != nil {
 		return err
 	}

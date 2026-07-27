@@ -63,19 +63,18 @@ and pgmesh's wrappers:
 sqlc generate
 ```
 
-Construct the generated `Store` with a database configuration:
+Construct the generated `Store` with a singleton topology:
 
 ```go
-queries, err := db.NewStore(ctx, db.Database(db.DatabaseConfig{
-    Primary: pool,
-}))
+queries, err := db.NewStore(ctx, db.Singleton(pool))
 account, err := queries.GetAccount(ctx, &db.GetAccountParams{
     TenantID: tenantID,
     ID:       accountID,
 })
 ```
 
-When the deployment grows, replace `DatabaseConfig` with `ShardedConfig`.
+When the deployment grows, replace `Singleton(...)` with a `Sharded(...)`
+topology.
 `queries` remains the same `db.Store` interface, so business code does not
 depend on whether pgmesh uses one database, replicas, mirrors, or shards.
 

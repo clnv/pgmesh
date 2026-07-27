@@ -160,42 +160,20 @@ func createStore(
 	if err != nil {
 		return nil, err
 	}
-	store, err := sharded.NewStore(ctx, sharded.Sharded(sharded.ShardedConfig[uint64]{
-		ReplicaSets: []sharded.ShardDatabaseConfig{
-			{
-				Name:     shard0Name,
-				Primary:  shard0Primary,
-				Replicas: []sharded.DBTX{shard0Replica},
-			},
-			{
-				Name:     shard1Name,
-				Primary:  shard1Primary,
-				Replicas: []sharded.DBTX{shard1Replica},
-			},
-			{Name: futureShard0Name, Primary: shard0Future, Replicas: nil},
-			{Name: futureShard1Name, Primary: shard1Future, Replicas: nil},
-		},
-		Shards: pgmesh.Shards{
-			NumVShards: numVShards,
-			Mappings: []pgmesh.VShardMapping{
-				{
-					VShards:           []uint64{0},
-					MainReplicaSet:    shard0Name,
-					MirrorReplicaSets: []string{futureShard0Name},
-				},
-				{
-					VShards:           []uint64{1},
-					MainReplicaSet:    shard1Name,
-					MirrorReplicaSets: []string{futureShard1Name},
-				},
-			},
-		},
-		ShardHasher:    pgmesh.ModularShardHashFor[uint64](numVShards),
-		Resolver:       tenantResolver{},
-		TracerProvider: nil,
-		MeterProvider:  nil,
-		Logger:         nil,
-	}))
+	store, err := sharded.NewStore(
+		ctx,
+		sharded.Sharded(
+			numVShards,
+			pgmesh.ModularShardHashFor[uint64](numVShards),
+			tenantResolver{},
+			sharded.WithReplicaSet(shard0Name, shard0Primary, shard0Replica),
+			sharded.WithReplicaSet(shard1Name, shard1Primary, shard1Replica),
+			sharded.WithReplicaSet(futureShard0Name, shard0Future),
+			sharded.WithReplicaSet(futureShard1Name, shard1Future),
+			sharded.WithVShardMapping(shard0Name, []uint64{0}, futureShard0Name),
+			sharded.WithVShardMapping(shard1Name, []uint64{1}, futureShard1Name),
+		),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("create store: %w", err)
 	}

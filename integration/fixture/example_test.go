@@ -9,26 +9,21 @@ import (
 
 func ExampleStore() {
 	log := &callLog{}
-	queries, err := NewStore(context.Background(), Sharded(ShardedConfig[uint64]{
-		ReplicaSets: []ShardDatabaseConfig{
-			{
-				Name:     "main",
-				Primary:  &fakeDB{name: "primary", log: log},
-				Replicas: []DBTX{&fakeDB{name: "replica", log: log}},
-			},
-			{Name: "mirror", Primary: &fakeDB{name: "mirror", log: log}},
-		},
-		Shards: pgmesh.Shards{
-			NumVShards: 1,
-			Mappings: []pgmesh.VShardMapping{{
-				VShards:           []uint64{0},
-				MainReplicaSet:    "main",
-				MirrorReplicaSets: []string{"mirror"},
-			}},
-		},
-		ShardHasher: pgmesh.ConstantShardHashFor[uint64](0),
-		Resolver:    tenantResolver{},
-	}))
+	queries, err := NewStore(
+		context.Background(),
+		Sharded(
+			1,
+			pgmesh.ConstantShardHashFor[uint64](0),
+			tenantResolver{},
+			WithReplicaSet(
+				"main",
+				&fakeDB{name: "primary", log: log},
+				&fakeDB{name: "replica", log: log},
+			),
+			WithReplicaSet("mirror", &fakeDB{name: "mirror", log: log}),
+			WithVShardMapping("main", []uint64{0}, "mirror"),
+		),
+	)
 	if err != nil {
 		panic(err)
 	}

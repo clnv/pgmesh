@@ -6,85 +6,121 @@ import (
 	"context"
 	"fmt"
 	pgmesh "github.com/clnv/pgmesh"
-	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/trace"
-	"log/slog"
 )
 
-// ShardDatabaseConfig configures one primary and its read replicas.
-type ShardDatabaseConfig struct {
-	// Name uniquely identifies the physical replica set.
-	Name string
-	// Primary serves writes and primary reads. The caller owns its lifecycle.
-	Primary DBTX
-	// Replicas serve ordinary reads in round-robin order. The caller owns their lifecycles.
-	Replicas []DBTX
+type shardDatabase struct {
+	name     string
+	primary  DBTX
+	replicas []DBTX
 }
 
-// ShardedConfig configures shard routing behind the generated Store API.
-type ShardedConfig[SK any] struct {
-	// ReplicaSets define the physical database nodes in the topology.
-	ReplicaSets []ShardDatabaseConfig
-	// Shards maps every virtual shard to a primary replica set and ordered mirrors.
-	Shards pgmesh.Shards
-	// ShardHasher maps resolved shard keys to virtual shard indexes.
-	ShardHasher pgmesh.ShardHasher[SK]
-	// Resolver extracts application shard keys from generated query parameters.
-	Resolver ShardResolver[SK]
-	// TracerProvider records routed query spans; nil uses the global provider.
-	TracerProvider trace.TracerProvider
-	// MeterProvider records routed query metrics; nil uses the global provider.
-	MeterProvider metric.MeterProvider
-	// Logger receives routed query debug logs; nil disables logging.
-	Logger *slog.Logger
+type shardMapping struct {
+	mainReplicaSet    string
+	vshards           []uint64
+	mirrorReplicaSets []string
 }
 
-type shardedStoreConfig[SK any] struct{ config ShardedConfig[SK] }
-
-// Sharded returns an opaque sharded topology configuration.
-func Sharded[SK any](config ShardedConfig[SK]) StoreConfig {
-	return shardedStoreConfig[SK]{config: config}
+type shardedOptions struct {
+	replicaSets []shardDatabase
+	mappings    []shardMapping
 }
 
-func (c shardedStoreConfig[SK]) buildStore(ctx context.Context) (Store, error) {
-	config := c.config
-	if config.Resolver == nil {
+// ShardedOption customizes a sharded topology.
+type ShardedOption func(*shardedOptions)
+
+// WithReplicaSet appends a named primary and its optional read replicas.
+func WithReplicaSet(name string, primary DBTX, replicas ...DBTX) ShardedOption {
+	configuredReplicas := append([]DBTX(nil), replicas...)
+	return func(options *shardedOptions) {
+		options.replicaSets = append(options.replicaSets, shardDatabase{
+			name: name, primary: primary, replicas: append([]DBTX(nil), configuredReplicas...),
+		})
+	}
+}
+
+// WithVShardMapping maps virtual shards to a main replica set and optional ordered write mirrors.
+func WithVShardMapping(mainReplicaSet string, vshards []uint64, mirrorReplicaSets ...string) ShardedOption {
+	configuredVShards := append([]uint64(nil), vshards...)
+	configuredMirrors := append([]string(nil), mirrorReplicaSets...)
+	return func(options *shardedOptions) {
+		options.mappings = append(options.mappings, shardMapping{
+			mainReplicaSet:    mainReplicaSet,
+			vshards:           append([]uint64(nil), configuredVShards...),
+			mirrorReplicaSets: append([]string(nil), configuredMirrors...),
+		})
+	}
+}
+
+type shardedTopology[SK any] struct {
+	numVShards  uint64
+	shardHasher pgmesh.ShardHasher[SK]
+	resolver    ShardResolver[SK]
+	options     shardedOptions
+	err         error
+}
+
+// Sharded returns an opaque sharded topology.
+func Sharded[SK any](numVShards uint64, shardHasher pgmesh.ShardHasher[SK], resolver ShardResolver[SK], options ...ShardedOption) Topology {
+	var configured shardedOptions
+	for index, option := range options {
+		if option == nil {
+			return shardedTopology[SK]{err: fmt.Errorf("pgmesh: sharded option %d is nil", index)}
+		}
+		option(&configured)
+	}
+	return shardedTopology[SK]{
+		numVShards:  numVShards,
+		shardHasher: shardHasher,
+		resolver:    resolver,
+		options:     configured,
+	}
+}
+
+func (c shardedTopology[SK]) buildStore(ctx context.Context, options storeOptions) (Store, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	if c.resolver == nil {
 		return nil, fmt.Errorf("pgmesh: shard resolver is nil")
 	}
 	nodes := make(map[string]DBTX)
-	specs := make([]pgmesh.ReplicaSetSpec, 0, len(config.ReplicaSets))
-	for setIndex, set := range config.ReplicaSets {
+	meshOptions := make([]pgmesh.MeshOption, 0, len(c.options.replicaSets)+len(c.options.mappings)+3)
+	for setIndex, set := range c.options.replicaSets {
 		primaryDSN := fmt.Sprintf("pgmesh-internal://%d/primary", setIndex)
-		nodes[primaryDSN] = set.Primary
-		replicas := make([]pgmesh.Connection, 0, len(set.Replicas))
-		for replicaIndex, database := range set.Replicas {
+		nodes[primaryDSN] = set.primary
+		replicaDSNs := make([]string, 0, len(set.replicas))
+		for replicaIndex, database := range set.replicas {
 			dsn := fmt.Sprintf("pgmesh-internal://%d/replica/%d", setIndex, replicaIndex)
 			nodes[dsn] = database
-			replicas = append(replicas, pgmesh.Connection{DSN: dsn})
+			replicaDSNs = append(replicaDSNs, dsn)
 		}
-		specs = append(specs, pgmesh.ReplicaSetSpec{
-			Name:     set.Name,
-			Primary:  pgmesh.Connection{DSN: primaryDSN},
-			Replicas: replicas,
-		})
+		meshOptions = append(meshOptions, pgmesh.WithReplicaSet(set.name, primaryDSN, replicaDSNs...))
 	}
-	mesh, err := pgmesh.CreateMesh(ctx, &pgmesh.Options[*readQueries, *queryStore, SK]{
-		ReplicaSets: specs,
-		Shards:      config.Shards,
-		CreateNode: func(_ context.Context, dsn string) (pgmesh.Node[*readQueries, *queryStore], error) {
+	for _, mapping := range c.options.mappings {
+		meshOptions = append(meshOptions, pgmesh.WithVShardMapping(
+			mapping.mainReplicaSet,
+			mapping.vshards,
+			mapping.mirrorReplicaSets...,
+		))
+	}
+	meshOptions = append(meshOptions,
+		pgmesh.WithTracerProvider(options.tracerProvider),
+		pgmesh.WithMeterProvider(options.meterProvider),
+		pgmesh.WithLogger(options.logger),
+	)
+	mesh, err := pgmesh.CreateMesh(ctx, c.numVShards,
+		func(_ context.Context, dsn string) (pgmesh.Node[*readQueries, *queryStore], error) {
 			database, ok := nodes[dsn]
 			if !ok || database == nil {
 				return pgmesh.Node[*readQueries, *queryStore]{}, fmt.Errorf("pgmesh: database node %q is nil", dsn)
 			}
 			return newStoreNode(database), nil
 		},
-		ShardHasher:    config.ShardHasher,
-		TracerProvider: config.TracerProvider,
-		MeterProvider:  config.MeterProvider,
-		Logger:         config.Logger,
-	})
+		c.shardHasher,
+		meshOptions...,
+	)
 	if err != nil {
 		return nil, err
 	}
-	return &meshStore[SK]{mesh: mesh, resolver: config.Resolver}, nil
+	return &meshStore[SK]{mesh: mesh, resolver: c.resolver}, nil
 }

@@ -88,39 +88,22 @@ func ExampleNewBuilder() {
 }
 
 func ExampleCreateMesh() {
-	mesh, err := pgmesh.CreateMesh(context.Background(), &pgmesh.Options[
-		*exampleReader,
-		*exampleWriter,
-		uint64,
-	]{
-		ReplicaSets: []pgmesh.ReplicaSetSpec{
-			{
-				Name:     "east",
-				Primary:  pgmesh.Connection{DSN: "east-primary"},
-				Replicas: []pgmesh.Connection{{DSN: "east-replica"}},
-			},
-			{Name: "west", Primary: pgmesh.Connection{DSN: "west-primary"}},
-			{Name: "archive", Primary: pgmesh.Connection{DSN: "archive-primary"}},
-		},
-		Shards: pgmesh.Shards{
-			NumVShards: 4,
-			Mappings: []pgmesh.VShardMapping{
-				{
-					VShards:           []uint64{0, 2},
-					MainReplicaSet:    "east",
-					MirrorReplicaSets: []string{"archive"},
-				},
-				{VShards: []uint64{1, 3}, MainReplicaSet: "west"},
-			},
-		},
-		CreateNode: func(_ context.Context, dsn string) (
+	mesh, err := pgmesh.CreateMesh(
+		context.Background(),
+		4,
+		func(_ context.Context, dsn string) (
 			pgmesh.Node[*exampleReader, *exampleWriter],
 			error,
 		) {
 			return exampleNode(dsn), nil
 		},
-		ShardHasher: pgmesh.ModularShardHashFor[uint64](4),
-	})
+		pgmesh.ModularShardHashFor[uint64](4),
+		pgmesh.WithReplicaSet("east", "east-primary", "east-replica"),
+		pgmesh.WithReplicaSet("west", "west-primary"),
+		pgmesh.WithReplicaSet("archive", "archive-primary"),
+		pgmesh.WithVShardMapping("east", []uint64{0, 2}, "archive"),
+		pgmesh.WithVShardMapping("west", []uint64{1, 3}),
+	)
 	if err != nil {
 		panic(err)
 	}

@@ -6,7 +6,7 @@ deployment to the full runtime topology.
 
 | Example | Topology | Features |
 | --- | --- | --- |
-| [`01-single-database`](01-single-database) | One PostgreSQL database | Generated `Store` with one-primary `DatabaseConfig` |
+| [`01-single-database`](01-single-database) | One PostgreSQL database | Generated `Store` with a `Singleton` topology |
 | [`02-read-write-split`](02-read-write-split) | One primary and one or more replicas | The same `Store`, replica reads, round-robin selection, strong reads |
 | [`03-sharded-read-write`](03-sharded-read-write) | Two physical shards, each with a replica | The same `Store`, virtual shards, separate unsharded settings store |
 | [`04-mirrors-and-transactions`](04-mirrors-and-transactions) | Two sharded primary/replica sets plus future-shard mirrors | Staged shard-expansion dual writes, primary-pinned transactions, mirror suppression in transactions |
