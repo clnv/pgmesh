@@ -63,7 +63,7 @@ func Generate(_ context.Context, req *plugin.GenerateRequest) (*plugin.GenerateR
 		return nil, fmt.Errorf("build query specifications: %w", err)
 	}
 
-	files, err := generateWrapper(opts, queries, imports)
+	files, err := generateWrapper(opts, queries, imports, req.GetCatalog())
 	if err != nil {
 		return nil, fmt.Errorf("generate wrappers: %w", err)
 	}

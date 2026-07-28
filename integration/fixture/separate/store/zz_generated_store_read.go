@@ -32,11 +32,41 @@ func (q *readQueries) GetAnalysis(ctx context.Context, arg *db.GetAnalysisParams
 	return rv0, nil
 }
 
+// GetTenantUserAnalysis executes the generated GetTenantUserAnalysis query.
+func (q *readQueries) GetTenantUserAnalysis(ctx context.Context, arg *db.GetTenantUserAnalysisParams) (*db.GetTenantUserAnalysisRow, error) {
+	rv0, err := q.main.GetTenantUserAnalysis(ctx, arg)
+	if err != nil {
+		var zero0 *db.GetTenantUserAnalysisRow
+		return zero0, err
+	}
+	return rv0, nil
+}
+
 // GetUser executes the generated GetUser query.
 func (q *readQueries) GetUser(ctx context.Context, arg *db.GetUserParams) (*db.User, error) {
 	rv0, err := q.main.GetUser(ctx, arg)
 	if err != nil {
 		var zero0 *db.User
+		return zero0, err
+	}
+	return rv0, nil
+}
+
+// ListP2PMessageIDsByChat executes the generated ListP2PMessageIDsByChat query.
+func (q *readQueries) ListP2PMessageIDsByChat(ctx context.Context, arg *db.ListP2PMessageIDsByChatParams) ([]interface{}, error) {
+	rv0, err := q.main.ListP2PMessageIDsByChat(ctx, arg)
+	if err != nil {
+		var zero0 []interface{}
+		return zero0, err
+	}
+	return rv0, nil
+}
+
+// ListP2PMessagesByChat executes the generated ListP2PMessagesByChat query.
+func (q *readQueries) ListP2PMessagesByChat(ctx context.Context, arg *db.ListP2PMessagesByChatParams) ([]*db.Message, error) {
+	rv0, err := q.main.ListP2PMessagesByChat(ctx, arg)
+	if err != nil {
+		var zero0 []*db.Message
 		return zero0, err
 	}
 	return rv0, nil

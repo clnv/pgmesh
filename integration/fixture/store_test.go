@@ -134,6 +134,44 @@ func (tenantResolver) Tenant(int64) uint64 {
 	return 0
 }
 
+func (tenantResolver) Messagekey(int64, int64, bool) uint64 {
+	return 0
+}
+
+type recordingTenantResolver struct {
+	tenantID *int64
+}
+
+func (r recordingTenantResolver) Tenant(tenantID int64) uint64 {
+	*r.tenantID = tenantID
+	return 0
+}
+
+func (recordingTenantResolver) Messagekey(int64, int64, bool) uint64 {
+	return 0
+}
+
+type recordingMessageKeyResolver struct {
+	userID          int64
+	toUserOrGroupID int64
+	inGroup         bool
+}
+
+func (recordingMessageKeyResolver) Tenant(int64) uint64 {
+	return 0
+}
+
+func (r *recordingMessageKeyResolver) Messagekey(
+	userID int64,
+	toUserOrGroupID int64,
+	inGroup bool,
+) uint64 {
+	r.userID = userID
+	r.toUserOrGroupID = toUserOrGroupID
+	r.inGroup = inGroup
+	return 0
+}
+
 func buildTestStore(t *testing.T, primary, replica *fakeDB, mirrors ...*fakeDB) Store {
 	t.Helper()
 
@@ -158,6 +196,79 @@ func buildTestStore(t *testing.T, primary, replica *fakeDB, mirrors ...*fakeDB) 
 	)
 	require.NoError(t, err)
 	return store
+}
+
+func TestGeneratedRoutingOnlyShardArgument(t *testing.T) {
+	t.Parallel()
+
+	log := &callLog{}
+	var resolvedTenantID int64
+	store, err := NewStore(
+		t.Context(),
+		Sharded(
+			1,
+			pgmesh.ConstantShardHashFor[uint64](0),
+			recordingTenantResolver{tenantID: &resolvedTenantID},
+			WithReplicaSet(
+				"main",
+				&fakeDB{name: "primary", log: log},
+				&fakeDB{name: "replica", log: log},
+			),
+			WithVShardMapping("main", []uint64{0}),
+		),
+	)
+	require.NoError(t, err)
+
+	row, err := store.Analyses().GetTenantUserAnalysis(
+		t.Context(),
+		&GetTenantUserAnalysisShardParams{
+			Arg: &GetTenantUserAnalysisParams{
+				UserID:     10,
+				AnalysisID: 20,
+			},
+			TenantID: 42,
+		},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, int64(42), resolvedTenantID)
+	assert.Equal(t, []string{"replica"}, log.snapshot())
+}
+
+func TestGeneratedP2PShardArgumentUsesMessageModel(t *testing.T) {
+	t.Parallel()
+
+	log := &callLog{}
+	resolver := &recordingMessageKeyResolver{}
+	store, err := NewStore(
+		t.Context(),
+		Sharded(
+			1,
+			pgmesh.ConstantShardHashFor[uint64](0),
+			resolver,
+			WithReplicaSet(
+				"main",
+				&fakeDB{name: "primary", log: log},
+				&fakeDB{name: "replica", log: log},
+			),
+			WithVShardMapping("main", []uint64{0}),
+		),
+	)
+	require.NoError(t, err)
+
+	_, err = store.QueryMessage().ListP2PMessageIDsByChat(
+		t.Context(),
+		&ListP2PMessageIDsByChatShardParams{
+			Arg:             &ListP2PMessageIDsByChatParams{UserID: 11},
+			ToUserOrGroupID: 22,
+			InGroup:         false,
+		},
+	)
+	require.ErrorContains(t, err, "fake rows are not configured")
+	assert.Equal(t, int64(11), resolver.userID)
+	assert.Equal(t, int64(22), resolver.toUserOrGroupID)
+	assert.False(t, resolver.inGroup)
+	assert.Equal(t, []string{"replica"}, log.snapshot())
 }
 
 func TestGeneratedTopologyOptionsCloneInputs(t *testing.T) {

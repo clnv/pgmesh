@@ -694,6 +694,277 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 	assert.Contains(t, got, "return newQueryStore(q.writeQueries.main.WithTx(tx))")
 }
 
+func TestGenerateWrapsRoutingOnlyShardOperand(t *testing.T) {
+	t.Parallel()
+
+	int8Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int8"}
+	int4Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int4"}
+	users := &plugin.Identifier{Schema: "public", Name: "users"}
+	response, err := Generate(t.Context(), &plugin.GenerateRequest{
+		Settings: &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "db"}},
+		Catalog: &plugin.Catalog{
+			DefaultSchema: "public",
+			Schemas: []*plugin.Schema{{
+				Name: "public",
+				Tables: []*plugin.Table{{
+					Rel: users,
+					Columns: []*plugin.Column{
+						{Name: "id", Type: int8Type, NotNull: true, Table: users},
+						{Name: "tenant_id", Type: int8Type, NotNull: true, Table: users},
+					},
+				}},
+			}},
+		},
+		Queries: []*plugin.Query{{
+			Name:     "ListTenantUsers",
+			Cmd:      ":many",
+			Comments: []string{"kind: read", "shard: tenant(tenant_id)", "store: Users"},
+			Params: []*plugin.Parameter{
+				{Number: 1, Column: &plugin.Column{Name: "limit", Type: int4Type, NotNull: true}},
+				{Number: 2, Column: &plugin.Column{Name: "offset", Type: int4Type, NotNull: true}},
+			},
+			Columns: []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true, Table: users}},
+		}},
+		PluginOptions: []byte(`{
+			"package":"db",
+			"sql_package":"pgx/v5",
+			"query_parameter_limit":1,
+			"emit_params_struct_pointers":true
+		}`),
+	})
+	require.NoError(t, err)
+
+	got := generatedSource(response)
+	assert.Contains(t, got, "type ListTenantUsersShardParams struct {\n\tArg      *ListTenantUsersParams\n\tTenantID int64\n}")
+	assert.Contains(
+		t,
+		got,
+		"ListTenantUsers(ctx context.Context, arg *ListTenantUsersShardParams, storeOptions ...QueryOption) ([]int64, error)",
+	)
+	assert.Contains(
+		t,
+		got,
+		"func (q *groupedMeshStore[SK]) ListTenantUsers(ctx context.Context, arg *ListTenantUsersShardParams, storeOptions ...QueryOption)",
+	)
+	body := generatedMethodBody(t, got, "groupedMeshStore[SK]", "ListTenantUsers")
+	assert.Contains(t, body, "shardKey = q.store.resolver.Tenant(arg.TenantID)")
+	assert.Contains(t, body, "return shard.Read().ListTenantUsers(ctx, arg.Arg)")
+	assert.Contains(t, got, "ListTenantUsers(ctx context.Context, arg *ListTenantUsersParams) ([]int64, error)")
+	assert.Contains(t, got, "Tenant(tenantID int64) SK")
+}
+
+func TestGenerateUsesRenamedModelFieldForRoutingOnlyShardOperand(t *testing.T) {
+	t.Parallel()
+
+	int8Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int8"}
+	users := &plugin.Identifier{Schema: "public", Name: "users"}
+	response, err := Generate(t.Context(), &plugin.GenerateRequest{
+		Settings: &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "db"}},
+		Catalog: &plugin.Catalog{
+			DefaultSchema: "public",
+			Schemas: []*plugin.Schema{{
+				Name: "public",
+				Tables: []*plugin.Table{{
+					Rel: users,
+					Columns: []*plugin.Column{
+						{Name: "id", Type: int8Type, NotNull: true, Table: users},
+						{Name: "tenant_id", Type: int8Type, NotNull: true, Table: users},
+					},
+				}},
+			}},
+		},
+		Queries: []*plugin.Query{{
+			Name:     "GetShardUser",
+			Cmd:      ":one",
+			Comments: []string{"kind: read", "shard: tenant(tenant_id)", "store: Users"},
+			Params: []*plugin.Parameter{{
+				Number: 1,
+				Column: &plugin.Column{Name: "id", Type: int8Type, NotNull: true, Table: users},
+			}},
+			Columns: []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true, Table: users}},
+		}},
+		PluginOptions: []byte(`{
+			"package":"db",
+			"sql_package":"pgx/v5",
+			"rename":{"tenant_id":"Shard"}
+		}`),
+	})
+	require.NoError(t, err)
+
+	got := generatedSource(response)
+	assert.Contains(t, got, "type GetShardUserShardParams struct {\n\tID    int64\n\tShard int64\n}")
+	assert.Contains(t, got, "GetShardUser(ctx context.Context, arg GetShardUserShardParams, storeOptions ...QueryOption)")
+	body := generatedMethodBody(t, got, "groupedMeshStore[SK]", "GetShardUser")
+	assert.Contains(t, body, "shardKey = q.store.resolver.Tenant(arg.Shard)")
+	assert.Contains(t, body, "return shard.Read().GetShardUser(ctx, arg.ID)")
+	assert.Contains(t, got, "Tenant(shard int64) SK")
+}
+
+func TestGenerateAllowsCompatibleShardFieldsOnMultipleModels(t *testing.T) {
+	t.Parallel()
+
+	int8Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int8"}
+	users := &plugin.Identifier{Schema: "public", Name: "users"}
+	accounts := &plugin.Identifier{Schema: "public", Name: "accounts"}
+	response, err := Generate(t.Context(), &plugin.GenerateRequest{
+		Settings: &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "db"}},
+		Catalog: &plugin.Catalog{
+			DefaultSchema: "public",
+			Schemas: []*plugin.Schema{{
+				Name: "public",
+				Tables: []*plugin.Table{
+					{
+						Rel: users,
+						Columns: []*plugin.Column{
+							{Name: "id", Type: int8Type, NotNull: true, Table: users},
+							{Name: "tenant_id", Type: int8Type, NotNull: true, Table: users},
+						},
+					},
+					{
+						Rel: accounts,
+						Columns: []*plugin.Column{
+							{Name: "id", Type: int8Type, NotNull: true, Table: accounts},
+							{Name: "tenant_id", Type: int8Type, NotNull: true, Table: accounts},
+						},
+					},
+				},
+			}},
+		},
+		Queries: []*plugin.Query{{
+			Name:     "ListMemberships",
+			Cmd:      ":many",
+			Comments: []string{"kind: read", "shard: tenant(tenant_id)", "store: Memberships"},
+			Columns: []*plugin.Column{
+				{Name: "user_id", OriginalName: "id", Type: int8Type, NotNull: true, Table: users},
+				{Name: "account_id", OriginalName: "id", Type: int8Type, NotNull: true, Table: accounts},
+			},
+		}},
+		PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5"}`),
+	})
+	require.NoError(t, err)
+
+	got := generatedSource(response)
+	assert.Contains(t, got, "type ListMembershipsShardParams struct {\n\tTenantID int64\n}")
+	assert.Contains(t, got, "Tenant(tenantID int64) SK")
+	body := generatedMethodBody(t, got, "groupedMeshStore[SK]", "ListMemberships")
+	assert.Contains(t, body, "shardKey = q.store.resolver.Tenant(arg.TenantID)")
+	assert.Contains(t, body, "return shard.Read().ListMemberships(ctx)")
+}
+
+func TestGeneratePrioritizesResultModelsForShardFieldLookup(t *testing.T) {
+	t.Parallel()
+
+	int8Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int8"}
+	textType := &plugin.Identifier{Name: "text"}
+	users := &plugin.Identifier{Schema: "public", Name: "users"}
+	audits := &plugin.Identifier{Schema: "public", Name: "audits"}
+	response, err := Generate(t.Context(), &plugin.GenerateRequest{
+		Settings: &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "db"}},
+		Catalog: &plugin.Catalog{
+			DefaultSchema: "public",
+			Schemas: []*plugin.Schema{{
+				Name: "public",
+				Tables: []*plugin.Table{
+					{
+						Rel: users,
+						Columns: []*plugin.Column{
+							{Name: "id", Type: int8Type, NotNull: true, Table: users},
+							{Name: "tenant_id", Type: int8Type, NotNull: true, Table: users},
+						},
+					},
+					{
+						Rel: audits,
+						Columns: []*plugin.Column{{
+							Name: "tenant_id", Type: textType, NotNull: true, Table: audits,
+						}},
+					},
+				},
+			}},
+		},
+		Queries: []*plugin.Query{{
+			Name:     "ListUsers",
+			Cmd:      ":many",
+			Comments: []string{"kind: read", "shard: tenant(tenant_id)", "store: Users"},
+			Params: []*plugin.Parameter{{
+				Number: 1,
+				Column: &plugin.Column{
+					Name: "audit_filter", Type: textType, NotNull: true, Table: audits,
+				},
+			}},
+			Columns: []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true, Table: users}},
+		}},
+		PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5"}`),
+	})
+	require.NoError(t, err)
+
+	got := generatedSource(response)
+	assert.Contains(t, got, "type ListUsersShardParams struct {\n\tAuditFilter string\n\tTenantID    int64\n}")
+	assert.Contains(t, got, "Tenant(tenantID int64) SK")
+}
+
+func TestGenerateUsesSQLSourceTableWhenColumnProvenanceIsMissing(t *testing.T) {
+	t.Parallel()
+
+	int8Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int8"}
+	textType := &plugin.Identifier{Name: "text"}
+	boolType := &plugin.Identifier{Schema: "pg_catalog", Name: "bool"}
+	message := &plugin.Identifier{Schema: "public", Name: "message"}
+	messageInbox := &plugin.Identifier{Schema: "public", Name: "message_inbox"}
+	response, err := Generate(t.Context(), &plugin.GenerateRequest{
+		Settings: &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "db"}},
+		Catalog: &plugin.Catalog{
+			DefaultSchema: "public",
+			Schemas: []*plugin.Schema{{
+				Name: "public",
+				Tables: []*plugin.Table{
+					{
+						Rel: message,
+						Columns: []*plugin.Column{
+							{Name: "id", Type: int8Type, NotNull: true, Table: message},
+							{Name: "user_id", Type: int8Type, NotNull: true, Table: message},
+							{Name: "to_user_or_group_id", Type: int8Type, NotNull: true, Table: message},
+							{Name: "in_group", Type: boolType, NotNull: true, Table: message},
+						},
+					},
+					{
+						Rel: messageInbox,
+						Columns: []*plugin.Column{{
+							Name:  "to_user_or_group_id",
+							Type:  textType,
+							Table: messageInbox,
+						}},
+					},
+				},
+			}},
+		},
+		Queries: []*plugin.Query{{
+			Name:     "ListP2PMessageIDsByChat",
+			Cmd:      ":many",
+			Text:     `SELECT id::bigint FROM "message" WHERE user_id = $1`,
+			Comments: []string{"kind: read", "shard: messageKey(user_id, to_user_or_group_id, in_group)", "store: QueryMessage"},
+			Params: []*plugin.Parameter{{
+				Number: 1,
+				Column: &plugin.Column{Name: "user_id", Type: int8Type, NotNull: true},
+			}},
+			Columns: []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}},
+		}},
+		PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5"}`),
+	})
+	require.NoError(t, err)
+
+	got := generatedSource(response)
+	assert.Contains(
+		t,
+		got,
+		"type ListP2PMessageIDsByChatShardParams struct {\n\tUserID          int64\n\tToUserOrGroupID int64\n\tInGroup         bool\n}",
+	)
+	assert.Contains(
+		t,
+		got,
+		"Messagekey(userID int64, toUserOrGroupID int64, inGroup bool) SK",
+	)
+}
+
 func TestGenerateRejectsMixedShardedAndUnshardedQueries(t *testing.T) {
 	t.Parallel()
 
@@ -1124,6 +1395,121 @@ func TestGenerateQualifiesSqlcTypesForSeparatePackage(t *testing.T) {
 	for _, check := range checks {
 		assert.Contains(t, got, check)
 	}
+}
+
+func TestGenerateExportsSQLCTypesForSeparatePackage(t *testing.T) {
+	t.Parallel()
+
+	int8Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int8"}
+	statusType := &plugin.Identifier{Schema: "public", Name: "status"}
+	users := &plugin.Identifier{Schema: "public", Name: "users"}
+	response, err := Generate(t.Context(), &plugin.GenerateRequest{
+		Settings: &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "store"}},
+		Catalog: &plugin.Catalog{
+			DefaultSchema: "public",
+			Schemas: []*plugin.Schema{{
+				Name:  "public",
+				Enums: []*plugin.Enum{{Name: "status", Vals: []string{"active", "disabled"}}},
+				Tables: []*plugin.Table{{
+					Rel: users,
+					Columns: []*plugin.Column{
+						{Name: "id", Type: int8Type, NotNull: true},
+						{Name: "tenant_id", Type: int8Type, NotNull: true},
+						{Name: "status", Type: statusType},
+					},
+				}},
+			}},
+		},
+		Queries: []*plugin.Query{
+			{
+				Name:     "CreateUser",
+				Cmd:      ":one",
+				Comments: []string{"kind: write", "store: Users"},
+				Params: []*plugin.Parameter{
+					{Number: 1, Column: &plugin.Column{Name: "id", Type: int8Type, NotNull: true}},
+					{Number: 2, Column: &plugin.Column{Name: "tenant_id", Type: int8Type, NotNull: true}},
+				},
+				Columns: []*plugin.Column{
+					{Name: "id", Type: int8Type, NotNull: true, Table: users},
+					{Name: "tenant_id", Type: int8Type, NotNull: true, Table: users},
+					{Name: "status", Type: statusType, Table: users},
+				},
+			},
+			{
+				Name:     "FindUser",
+				Cmd:      ":one",
+				Comments: []string{"kind: read", "store: Users"},
+				Params: []*plugin.Parameter{
+					{Number: 1, Column: &plugin.Column{Name: "id", Type: int8Type, NotNull: true}},
+					{Number: 2, Column: &plugin.Column{Name: "tenant_id", Type: int8Type, NotNull: true}},
+				},
+				Columns: []*plugin.Column{
+					{Name: "user_id", Type: int8Type, NotNull: true},
+					{Name: "user_status", Type: statusType},
+				},
+			},
+		},
+		PluginOptions: []byte(`{
+			"package":"store",
+			"internal_import_path":"example.test/project/internal/db",
+			"internal_import_alias":"db",
+			"export_sqlc_types":true,
+			"sql_package":"pgx/v5",
+			"query_parameter_limit":1
+		}`),
+	})
+	require.NoError(t, err)
+
+	interfaces := generatedFileContents(t, response, "store_querier_interfaces.go")
+	checks := []string{
+		"type CreateUserParams = db.CreateUserParams",
+		"type FindUserParams = db.FindUserParams",
+		"type FindUserRow = db.FindUserRow",
+		"type NullStatus = db.NullStatus",
+		"type Status = db.Status",
+		"type User = db.User",
+		"CreateUser(ctx context.Context, arg CreateUserParams, storeOptions ...QueryOption) (User, error)",
+		"FindUser(ctx context.Context, arg FindUserParams, storeOptions ...QueryOption) (FindUserRow, error)",
+	}
+	for _, check := range checks {
+		assert.Contains(t, interfaces, check)
+	}
+	assert.NotContains(t, interfaces, "type Queries =")
+	assert.NotContains(t, interfaces, "type Querier =")
+}
+
+func TestGenerateRejectsExportedSQLCTypeNameConflicts(t *testing.T) {
+	t.Parallel()
+
+	storeType := &plugin.Identifier{Schema: "public", Name: "store"}
+	_, err := Generate(t.Context(), &plugin.GenerateRequest{
+		Settings: &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "store"}},
+		Catalog: &plugin.Catalog{
+			DefaultSchema: "public",
+			Schemas: []*plugin.Schema{{
+				Name:  "public",
+				Enums: []*plugin.Enum{{Name: "store", Vals: []string{"primary"}}},
+			}},
+		},
+		Queries: []*plugin.Query{{
+			Name:     "GetStore",
+			Cmd:      ":one",
+			Comments: []string{"kind: read", "store: Stores"},
+			Columns:  []*plugin.Column{{Name: "store", Type: storeType, NotNull: true}},
+		}},
+		PluginOptions: []byte(`{
+			"package":"store",
+			"internal_import_path":"example.test/project/internal/db",
+			"export_sqlc_types":true,
+			"sql_package":"pgx/v5"
+		}`),
+	})
+
+	require.ErrorContains(
+		t,
+		err,
+		"export_sqlc_types cannot alias sqlc type Store because it conflicts with store interface",
+	)
 }
 
 func TestGenerateAppliesRenameAndNullableOptions(t *testing.T) {

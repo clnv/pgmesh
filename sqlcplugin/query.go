@@ -32,12 +32,17 @@ func querySpecs(req *plugin.GenerateRequest, opts *options) ([]generatedQuery, *
 }
 
 type generatedQuery struct {
-	methodName string
-	kind       queryKind
-	params     []argument
-	results    []string
-	route      *shardRoute
-	store      string
+	methodName  string
+	kind        queryKind
+	arg         queryValue
+	ret         queryValue
+	params      []argument
+	storeParams []argument
+	callArgs    []string
+	results     []string
+	route       *shardRoute
+	store       string
+	shardArgs   *shardArgWrapper
 }
 
 type storeGroup struct {
@@ -60,13 +65,19 @@ type routeOperand struct {
 	name       string
 	typ        string
 	expression string
+	dbName     string
+	fieldName  string
+	external   bool
+}
+
+type shardArgWrapper struct {
+	name   string
+	fields []argument
 }
 
 const (
-	shardAnnotationPrefix      = "shard:"
-	storeAnnotationPrefix      = "store:"
-	generatedOptionDeclaration = "generated option constructor"
-	sqlcDeclaration            = "sqlc declaration"
+	shardAnnotationPrefix = "shard:"
+	storeAnnotationPrefix = "store:"
 )
 
 func collectShardRoutes(queries []generatedQuery) ([]shardRoute, error) {
@@ -115,34 +126,7 @@ func collectStoreGroups(queries []generatedQuery, opts *options) ([]storeGroup, 
 	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].name < groups[j].name })
 
-	declarations := map[string]string{
-		opts.ConstructorName:       "constructor",
-		opts.ResolverInterfaceName: "resolver interface",
-		opts.ShardedConstructor:    "sharded constructor",
-		opts.StoreInterfaceName:    "store interface",
-		"QueryOption":              "generated query option",
-		"ReadFromPrimary":          generatedOptionDeclaration,
-		"ShardedOption":            "generated sharded option",
-		"Singleton":                "generated singleton constructor",
-		"SingletonOption":          "generated singleton option",
-		"StoreOption":              "generated store option",
-		"Topology":                 "generated topology",
-		"WithDatabaseName":         generatedOptionDeclaration,
-		"WithLogger":               generatedOptionDeclaration,
-		"WithMeterProvider":        generatedOptionDeclaration,
-		"WithReadReplicas":         generatedOptionDeclaration,
-		"WithReplicaSet":           generatedOptionDeclaration,
-		"WithTracerProvider":       generatedOptionDeclaration,
-		"WithTx":                   generatedOptionDeclaration,
-		"WithVShardMapping":        generatedOptionDeclaration,
-		"WithWriteMirrors":         generatedOptionDeclaration,
-	}
-	if opts.InternalImportPath == "" {
-		declarations["DBTX"] = sqlcDeclaration
-		declarations[defaultTargetNew] = sqlcDeclaration
-		declarations[defaultTargetType] = sqlcDeclaration
-		declarations["Querier"] = sqlcDeclaration
-	}
+	declarations := generatedDeclarations(opts)
 
 	for _, group := range groups {
 		for _, declaration := range []string{
@@ -160,6 +144,20 @@ func collectStoreGroups(queries []generatedQuery, opts *options) ([]storeGroup, 
 			}
 			declarations[declaration] = "store group " + group.name
 		}
+	}
+	for _, query := range queries {
+		if query.shardArgs == nil {
+			continue
+		}
+		if previous, exists := declarations[query.shardArgs.name]; exists {
+			return nil, fmt.Errorf(
+				"query %s generates shard parameter wrapper %s that conflicts with %s",
+				query.methodName,
+				query.shardArgs.name,
+				previous,
+			)
+		}
+		declarations[query.shardArgs.name] = "shard parameter wrapper for " + query.methodName
 	}
 
 	return groups, nil
@@ -195,6 +193,14 @@ const (
 type argument struct {
 	name string
 	typ  string
+}
+
+func argumentNames(params []argument) []string {
+	names := make([]string, 0, len(params))
+	for _, param := range params {
+		names = append(names, param.name)
+	}
+	return names
 }
 
 func paramsSignature(params []argument) string {
@@ -459,7 +465,14 @@ func buildQueries(
 					query.GetName(), query.GetCmd(),
 				)
 			}
-			route, err = resolveShardRoute(query, arg, annotation, opts)
+			route, err = resolveShardRoute(
+				query,
+				arg,
+				annotation,
+				opts,
+				structs,
+				req.GetCatalog().GetDefaultSchema(),
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -469,13 +482,21 @@ func buildQueries(
 		}
 
 		out = append(out, generatedQuery{
-			methodName: query.GetName(),
-			kind:       kind,
-			params:     params,
-			results:    results,
-			route:      route,
-			store:      store,
+			methodName:  query.GetName(),
+			kind:        kind,
+			arg:         arg,
+			ret:         ret,
+			params:      params,
+			storeParams: append([]argument(nil), params...),
+			callArgs:    argumentNames(params),
+			results:     results,
+			route:       route,
+			store:       store,
+			shardArgs:   nil,
 		})
+	}
+	if err := wrapQueriesWithExternalShardOperands(out, opts); err != nil {
+		return nil, err
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].methodName < out[j].methodName
@@ -755,6 +776,8 @@ func resolveShardRoute(
 	arg queryValue,
 	annotation *routeAnnotation,
 	opts *options,
+	structs []goStruct,
+	defaultSchema string,
 ) (*shardRoute, error) {
 	route := &shardRoute{
 		name:       annotation.name,
@@ -775,10 +798,18 @@ func resolveShardRoute(
 	for _, dbName := range annotation.operands {
 		operand, ok := routeOperandForArg(arg, dbName, opts)
 		if !ok {
-			return nil, fmt.Errorf(
-				"query %s shard operand %q does not match a SQL parameter",
-				query.GetName(), dbName,
-			)
+			field, err := routeOperandFieldFromModels(query, dbName, structs, defaultSchema)
+			if err != nil {
+				return nil, err
+			}
+			operand = routeOperand{
+				name:       escape(lowerTitle(field.name)),
+				typ:        field.typ,
+				expression: "",
+				dbName:     dbName,
+				fieldName:  field.name,
+				external:   true,
+			}
 		}
 		if _, ok := seenNames[operand.name]; ok {
 			return nil, fmt.Errorf(
@@ -818,21 +849,274 @@ func routeOperandForArg(arg queryValue, dbName string, opts *options) (routeOper
 				expression = escape(arg.name) + "." + field.name
 			}
 			return routeOperand{
-				name:       escape(lowerTitle(structName(dbName, opts))),
+				name:       escape(lowerTitle(field.name)),
 				typ:        field.typ,
 				expression: expression,
+				dbName:     dbName,
+				fieldName:  field.name,
+				external:   false,
 			}, true
 		}
-		return routeOperand{name: "", typ: "", expression: ""}, false
+		return routeOperand{
+			name:       "",
+			typ:        "",
+			expression: "",
+			dbName:     "",
+			fieldName:  "",
+			external:   false,
+		}, false
 	}
 	if arg.dbName != dbName {
-		return routeOperand{name: "", typ: "", expression: ""}, false
+		return routeOperand{
+			name:       "",
+			typ:        "",
+			expression: "",
+			dbName:     "",
+			fieldName:  "",
+			external:   false,
+		}, false
 	}
+	fieldName := structName(dbName, opts)
 	return routeOperand{
-		name:       escape(lowerTitle(structName(dbName, opts))),
+		name:       escape(lowerTitle(fieldName)),
 		typ:        arg.typ,
 		expression: escape(arg.name),
+		dbName:     dbName,
+		fieldName:  fieldName,
+		external:   false,
 	}, true
+}
+
+func routeOperandFieldFromModels(
+	query *plugin.Query,
+	dbName string,
+	structs []goStruct,
+	defaultSchema string,
+) (goField, error) {
+	groups := relatedQueryModelGroups(query, structs, defaultSchema)
+	groups = append(groups, structs)
+	for _, models := range groups {
+		var matched *goField
+		var matchedModel string
+		for index := range models {
+			model := &models[index]
+			for fieldIndex := range model.fields {
+				field := &model.fields[fieldIndex]
+				if field.dbName != dbName {
+					continue
+				}
+				if matched != nil && (matched.name != field.name || matched.typ != field.typ) {
+					return goField{}, fmt.Errorf(
+						"query %s shard operand %q matches incompatible fields on generated models %s and %s",
+						query.GetName(),
+						dbName,
+						matchedModel,
+						model.name,
+					)
+				}
+				fieldCopy := *field
+				matched = &fieldCopy
+				matchedModel = model.name
+			}
+		}
+		if matched != nil {
+			return *matched, nil
+		}
+	}
+	return goField{}, fmt.Errorf(
+		"query %s shard operand %q does not match a SQL parameter or a field on its generated table model",
+		query.GetName(),
+		dbName,
+	)
+}
+
+func relatedQueryModelGroups(
+	query *plugin.Query,
+	structs []goStruct,
+	defaultSchema string,
+) [][]goStruct {
+	groups := make([][]goStruct, 0, 3)
+	if query.GetInsertIntoTable() != nil {
+		groups = append(groups, modelsForTables(
+			[]*plugin.Identifier{query.GetInsertIntoTable()},
+			structs,
+			defaultSchema,
+		))
+	}
+
+	resultTables := make([]*plugin.Identifier, 0, len(query.GetColumns()))
+	for _, column := range query.GetColumns() {
+		if column.GetTable() != nil {
+			resultTables = append(resultTables, column.GetTable())
+		}
+	}
+	if models := modelsForTables(resultTables, structs, defaultSchema); len(models) > 0 {
+		groups = append(groups, models)
+	}
+
+	if models := modelsForTables(
+		queryRelationIdentifiers(query.GetText()),
+		structs,
+		defaultSchema,
+	); len(models) > 0 {
+		groups = append(groups, models)
+	}
+
+	parameterTables := make([]*plugin.Identifier, 0, len(query.GetParams()))
+	for _, param := range query.GetParams() {
+		if param.GetColumn().GetTable() != nil {
+			parameterTables = append(parameterTables, param.GetColumn().GetTable())
+		}
+	}
+	if models := modelsForTables(parameterTables, structs, defaultSchema); len(models) > 0 {
+		groups = append(groups, models)
+	}
+	return groups
+}
+
+func modelsForTables(
+	tables []*plugin.Identifier,
+	structs []goStruct,
+	defaultSchema string,
+) []goStruct {
+	related := make([]goStruct, 0, len(tables))
+	for _, model := range structs {
+		for _, table := range tables {
+			if !sameTableName(table, model.table, defaultSchema) {
+				continue
+			}
+			related = append(related, model)
+			break
+		}
+	}
+	return related
+}
+
+func wrapQueriesWithExternalShardOperands(queries []generatedQuery, opts *options) error {
+	for index := range queries {
+		query := &queries[index]
+		if query.route == nil {
+			continue
+		}
+		hasExternal := false
+		for _, operand := range query.route.operands {
+			if operand.external {
+				hasExternal = true
+				break
+			}
+		}
+		if hasExternal {
+			if err := wrapExternalShardOperands(query, opts); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func wrapExternalShardOperands(query *generatedQuery, opts *options) error {
+	wrapper := &shardArgWrapper{
+		name:   query.methodName + "ShardParams",
+		fields: nil,
+	}
+	usedFields := make(map[string]string)
+	appendField := func(name, typ, source string) error {
+		if previous, exists := usedFields[name]; exists {
+			return fmt.Errorf(
+				"query %s shard parameter wrapper field %s conflicts between %s and %s",
+				query.methodName,
+				name,
+				previous,
+				source,
+			)
+		}
+		usedFields[name] = source
+		wrapper.fields = append(wrapper.fields, argument{name: name, typ: typ})
+		return nil
+	}
+
+	callArgs := []string{query.params[0].name}
+	arg := query.arg
+	switch {
+	case arg.isEmpty():
+	case arg.emit:
+		if err := appendField("Arg", arg.defineType(opts), "sqlc argument"); err != nil {
+			return err
+		}
+		callArgs = append(callArgs, "arg.Arg")
+	case arg.structType != nil:
+		for _, field := range arg.structType.fields {
+			if err := appendField(field.name, field.typ, "SQL parameter "+field.dbName); err != nil {
+				return err
+			}
+			callArgs = append(callArgs, "arg."+field.name)
+		}
+	default:
+		fieldName := structName(arg.dbName, opts)
+		if fieldName == "" {
+			fieldName = structName(arg.name, opts)
+		}
+		if err := appendField(fieldName, arg.defineType(opts), "SQL parameter "+arg.dbName); err != nil {
+			return err
+		}
+		callArgs = append(callArgs, "arg."+fieldName)
+	}
+
+	for operandIndex := range query.route.operands {
+		operand := &query.route.operands[operandIndex]
+		if operand.external {
+			fieldName := operand.fieldName
+			if err := appendField(fieldName, operand.typ, "shard operand "+operand.dbName); err != nil {
+				return err
+			}
+			operand.expression = "arg." + fieldName
+			continue
+		}
+		expression, ok := wrappedRouteOperandExpression(arg, operand.dbName, opts)
+		if !ok {
+			return fmt.Errorf(
+				"query %s cannot wrap SQL parameter %q for shard routing",
+				query.methodName,
+				operand.dbName,
+			)
+		}
+		operand.expression = expression
+	}
+
+	wrapperType := wrapper.name
+	if opts.EmitParamsStructPointers {
+		wrapperType = "*" + wrapperType
+	}
+	query.storeParams = []argument{
+		query.params[0],
+		{name: "arg", typ: wrapperType},
+	}
+	query.callArgs = callArgs
+	query.shardArgs = wrapper
+	return nil
+}
+
+func wrappedRouteOperandExpression(arg queryValue, dbName string, opts *options) (string, bool) {
+	if arg.structType != nil {
+		for _, field := range arg.structType.fields {
+			if field.dbName != dbName {
+				continue
+			}
+			if arg.emit {
+				return "arg.Arg." + field.name, true
+			}
+			return "arg." + field.name, true
+		}
+		return "", false
+	}
+	if arg.dbName != dbName {
+		return "", false
+	}
+	fieldName := structName(arg.dbName, opts)
+	if fieldName == "" {
+		fieldName = structName(arg.name, opts)
+	}
+	return "arg." + fieldName, true
 }
 
 func buildQueryReturn(
