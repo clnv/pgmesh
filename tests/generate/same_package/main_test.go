@@ -22,7 +22,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"github.com/clnv/pgmesh"
+	"github.com/sundayfun/pgmesh"
 )
 
 type callLog struct {

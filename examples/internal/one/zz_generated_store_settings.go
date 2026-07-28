@@ -4,7 +4,7 @@ package one
 
 import (
 	"context"
-	pgmesh "github.com/clnv/pgmesh"
+	pgmesh "github.com/sundayfun/pgmesh"
 )
 
 // SettingsReader exposes read queries in the Settings store group.

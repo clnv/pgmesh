@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/clnv/pgmesh/tests/generate/separate_package/store"
-	"github.com/clnv/pgmesh/tests/integration/testdb"
+	"github.com/sundayfun/pgmesh/tests/generate/separate_package/store"
+	"github.com/sundayfun/pgmesh/tests/integration/testdb"
 )
 
 func TestSeparatePackageStoreAgainstPostgres(t *testing.T) {

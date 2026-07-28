@@ -5,9 +5,9 @@ package store
 import (
 	"context"
 	"fmt"
-	pgmesh "github.com/clnv/pgmesh"
-	db "github.com/clnv/pgmesh/tests/generate/commands/internal"
 	"github.com/jackc/pgx/v5"
+	pgmesh "github.com/sundayfun/pgmesh"
+	db "github.com/sundayfun/pgmesh/tests/generate/commands/internal"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"log/slog"

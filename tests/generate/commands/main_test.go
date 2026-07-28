@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	db "github.com/clnv/pgmesh/tests/generate/commands/internal"
-	"github.com/clnv/pgmesh/tests/generate/commands/store"
+	db "github.com/sundayfun/pgmesh/tests/generate/commands/internal"
+	"github.com/sundayfun/pgmesh/tests/generate/commands/store"
 )
 
 func TestGeneratedCommandStore(t *testing.T) {

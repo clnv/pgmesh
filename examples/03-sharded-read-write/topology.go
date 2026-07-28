@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/clnv/pgmesh"
-	"github.com/clnv/pgmesh/examples/internal/one"
-	"github.com/clnv/pgmesh/examples/internal/sharded"
+	"github.com/sundayfun/pgmesh"
+	"github.com/sundayfun/pgmesh/examples/internal/one"
+	"github.com/sundayfun/pgmesh/examples/internal/sharded"
 )
 
 const numVShards = 128

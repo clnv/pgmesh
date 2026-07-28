@@ -4,9 +4,9 @@ package store
 
 import (
 	"context"
-	pgmesh "github.com/clnv/pgmesh"
-	db "github.com/clnv/pgmesh/tests/generate/separate_package/internal"
 	"github.com/jackc/pgx/v5/pgtype"
+	pgmesh "github.com/sundayfun/pgmesh"
+	db "github.com/sundayfun/pgmesh/tests/generate/separate_package/internal"
 )
 
 // ListP2PMessageIDsByChatShardParams combines sqlc and routing-only shard parameters for ListP2PMessageIDsByChat.

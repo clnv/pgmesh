@@ -9,8 +9,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/clnv/pgmesh"
-	"github.com/clnv/pgmesh/examples/internal/sharded"
+	"github.com/sundayfun/pgmesh"
+	"github.com/sundayfun/pgmesh/examples/internal/sharded"
 )
 
 const (

@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/clnv/pgmesh/examples/internal/sharded"
+	"github.com/sundayfun/pgmesh/examples/internal/sharded"
 )
 
 func main() {

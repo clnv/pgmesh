@@ -4,7 +4,7 @@ package sharded
 
 import (
 	"context"
-	pgmesh "github.com/clnv/pgmesh"
+	pgmesh "github.com/sundayfun/pgmesh"
 )
 
 // ReportsReader exposes read queries in the Reports store group.

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/clnv/pgmesh/examples/internal/one"
-	"github.com/clnv/pgmesh/examples/internal/sharded"
+	"github.com/sundayfun/pgmesh/examples/internal/one"
+	"github.com/sundayfun/pgmesh/examples/internal/sharded"
 )
 
 func exerciseStores(

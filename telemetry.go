@@ -14,7 +14,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const instrumentationName = "github.com/clnv/pgmesh"
+const instrumentationName = "github.com/sundayfun/pgmesh"
 
 // MetricQueryDuration is the OpenTelemetry histogram of routed query durations
 // in seconds. Its count also reports completed query throughput. The configured

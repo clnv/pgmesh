@@ -11,14 +11,14 @@ sqlc version in [`just/toolings.just`](../just/toolings.just).
 Add pgmesh and pgx to your application:
 
 ```bash
-go get github.com/clnv/pgmesh
+go get github.com/sundayfun/pgmesh
 go get github.com/jackc/pgx/v5
 ```
 
 Install the process plugin somewhere on `PATH`:
 
 ```bash
-go install github.com/clnv/pgmesh/cmd/sqlc-gen-store@latest
+go install github.com/sundayfun/pgmesh/cmd/sqlc-gen-store@latest
 ```
 
 When working from a pgmesh checkout instead, build the local plugin with:

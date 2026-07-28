@@ -5,7 +5,7 @@ package samepackage
 import (
 	"context"
 	"fmt"
-	pgmesh "github.com/clnv/pgmesh"
+	pgmesh "github.com/sundayfun/pgmesh"
 )
 
 type shardDatabase struct {

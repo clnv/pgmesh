@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/clnv/pgmesh/tests/generate/separate_package/store"
+	"github.com/sundayfun/pgmesh/tests/generate/separate_package/store"
 )
 
 func TestExportedSQLCTypes(t *testing.T) {

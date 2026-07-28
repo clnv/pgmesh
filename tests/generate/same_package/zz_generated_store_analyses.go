@@ -4,7 +4,7 @@ package samepackage
 
 import (
 	"context"
-	pgmesh "github.com/clnv/pgmesh"
+	pgmesh "github.com/sundayfun/pgmesh"
 )
 
 // GetTenantUserAnalysisShardParams combines sqlc and routing-only shard parameters for GetTenantUserAnalysis.

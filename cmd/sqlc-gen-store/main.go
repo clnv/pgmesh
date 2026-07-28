@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/clnv/pgmesh/sqlcplugin"
 	sdkcodegen "github.com/sqlc-dev/plugin-sdk-go/codegen"
+	"github.com/sundayfun/pgmesh/sqlcplugin"
 )
 
 func main() {

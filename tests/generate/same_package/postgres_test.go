@@ -14,9 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/clnv/pgmesh"
-	fixture "github.com/clnv/pgmesh/tests/generate/same_package"
-	"github.com/clnv/pgmesh/tests/integration/testdb"
+	"github.com/sundayfun/pgmesh"
+	fixture "github.com/sundayfun/pgmesh/tests/generate/same_package"
+	"github.com/sundayfun/pgmesh/tests/integration/testdb"
 )
 
 type tenantResolver struct{}

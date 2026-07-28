@@ -4,7 +4,7 @@ package store
 
 import (
 	"context"
-	db "github.com/clnv/pgmesh/tests/generate/separate_package/internal"
+	db "github.com/sundayfun/pgmesh/tests/generate/separate_package/internal"
 )
 
 // Analysis re-exports Analysis from the sqlc package.

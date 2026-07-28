@@ -4,8 +4,8 @@ package store
 
 import (
 	"context"
-	db "github.com/clnv/pgmesh/tests/generate/commands/internal"
 	"github.com/jackc/pgx/v5/pgconn"
+	db "github.com/sundayfun/pgmesh/tests/generate/commands/internal"
 )
 
 // readQuerier exposes generated read queries.

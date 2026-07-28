@@ -6,8 +6,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	db "github.com/clnv/pgmesh/tests/generate/separate_package/internal"
 	"github.com/jackc/pgx/v5"
+	db "github.com/sundayfun/pgmesh/tests/generate/separate_package/internal"
 )
 
 // writeQueries exposes primary-capable generated queries.

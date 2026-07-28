@@ -56,7 +56,7 @@ sql:
 | `store_interface` | exported identifier | `Store` | Public topology-independent query interface. |
 | `resolver_interface` | exported identifier | `ShardResolver` | Public generic shard resolver interface. |
 | `sharded_constructor` | exported identifier | `Sharded` | Public sharded `Topology` constructor. |
-| `runtime_import_path` | string | `github.com/clnv/pgmesh` | Runtime import override, primarily for forks. |
+| `runtime_import_path` | string | `github.com/sundayfun/pgmesh` | Runtime import override, primarily for forks. |
 | `ignore_mirror_error` | boolean | `false` | Discards mirror errors. By default only mirror `ErrNoRows` is ignored. |
 | `sql_package` | string | `pgx/v5` | sqlc driver selection; no other value is supported. |
 | `query_parameter_limit` | nonnegative integer | `1` | Matches sqlc's parameter-struct threshold. |

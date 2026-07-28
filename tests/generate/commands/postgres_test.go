@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	db "github.com/clnv/pgmesh/tests/generate/commands/internal"
-	"github.com/clnv/pgmesh/tests/generate/commands/store"
-	"github.com/clnv/pgmesh/tests/integration/testdb"
+	db "github.com/sundayfun/pgmesh/tests/generate/commands/internal"
+	"github.com/sundayfun/pgmesh/tests/generate/commands/store"
+	"github.com/sundayfun/pgmesh/tests/integration/testdb"
 )
 
 func TestGeneratedCommandShapesAgainstPostgres(t *testing.T) {

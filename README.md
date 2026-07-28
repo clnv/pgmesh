@@ -1,8 +1,8 @@
 # pgmesh
 
-[![Test](https://github.com/clnv/pgmesh/actions/workflows/test.yml/badge.svg)](https://github.com/clnv/pgmesh/actions/workflows/test.yml)
-[![Lint](https://github.com/clnv/pgmesh/actions/workflows/lint.yml/badge.svg)](https://github.com/clnv/pgmesh/actions/workflows/lint.yml)
-[![Integration](https://github.com/clnv/pgmesh/actions/workflows/integration.yml/badge.svg)](https://github.com/clnv/pgmesh/actions/workflows/integration.yml)
+[![Test](https://github.com/sundayfun/pgmesh/actions/workflows/test.yml/badge.svg)](https://github.com/sundayfun/pgmesh/actions/workflows/test.yml)
+[![Lint](https://github.com/sundayfun/pgmesh/actions/workflows/lint.yml/badge.svg)](https://github.com/sundayfun/pgmesh/actions/workflows/lint.yml)
+[![Integration](https://github.com/sundayfun/pgmesh/actions/workflows/integration.yml/badge.svg)](https://github.com/sundayfun/pgmesh/actions/workflows/integration.yml)
 
 **Type-safe PostgreSQL query routing for sqlc and pgx/v5.**
 
@@ -37,8 +37,8 @@ of those concerns.
 Install the runtime and generator:
 
 ```bash
-go get github.com/clnv/pgmesh
-go install github.com/clnv/pgmesh/cmd/sqlc-gen-store@latest
+go get github.com/sundayfun/pgmesh
+go install github.com/sundayfun/pgmesh/cmd/sqlc-gen-store@latest
 ```
 
 Classify and group each sqlc query. Add a shard route only when the query

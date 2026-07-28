@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/clnv/pgmesh"
+	"github.com/sundayfun/pgmesh"
 )
 
 func ExampleStore() {

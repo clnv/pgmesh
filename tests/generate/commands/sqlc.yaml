@@ -23,7 +23,7 @@ sql:
         options:
           package: "store"
           output_file_name: "zz_generated_store.go"
-          internal_import_path: "github.com/clnv/pgmesh/tests/generate/commands/internal"
+          internal_import_path: "github.com/sundayfun/pgmesh/tests/generate/commands/internal"
           internal_import_alias: "db"
           sql_package: "pgx/v5"
           query_parameter_limit: 1

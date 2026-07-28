@@ -38,7 +38,7 @@ const (
 	defaultTargetNew      = "New"
 	defaultReceiverName   = "q"
 	defaultPGXPackage     = "github.com/jackc/pgx/v5"
-	defaultRuntimePackage = "github.com/clnv/pgmesh"
+	defaultRuntimePackage = "github.com/sundayfun/pgmesh"
 	defaultNodeNew        = "newStoreNode"
 	defaultResolver       = "ShardResolver"
 	defaultMeshStoreType  = "meshStore"

@@ -21,7 +21,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/clnv/pgmesh"
+	"github.com/sundayfun/pgmesh"
 )
 
 type fakeWriter struct {

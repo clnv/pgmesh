@@ -5,8 +5,8 @@ package store
 import (
 	"context"
 	"fmt"
-	pgmesh "github.com/clnv/pgmesh"
-	db "github.com/clnv/pgmesh/tests/generate/separate_package/internal"
+	pgmesh "github.com/sundayfun/pgmesh"
+	db "github.com/sundayfun/pgmesh/tests/generate/separate_package/internal"
 )
 
 type shardDatabase struct {

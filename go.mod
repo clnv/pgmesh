@@ -1,4 +1,4 @@
-module github.com/clnv/pgmesh
+module github.com/sundayfun/pgmesh
 
 go 1.26.5
 

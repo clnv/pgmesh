@@ -4,8 +4,8 @@ package store
 
 import (
 	"context"
-	db "github.com/clnv/pgmesh/tests/generate/separate_package/internal"
 	"github.com/jackc/pgx/v5"
+	db "github.com/sundayfun/pgmesh/tests/generate/separate_package/internal"
 )
 
 // readQueries exposes read-only generated queries.

@@ -5,8 +5,8 @@ package one
 import (
 	"context"
 	"fmt"
-	pgmesh "github.com/clnv/pgmesh"
 	"github.com/jackc/pgx/v5"
+	pgmesh "github.com/sundayfun/pgmesh"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 	"log/slog"

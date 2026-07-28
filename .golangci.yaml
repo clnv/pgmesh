@@ -76,7 +76,7 @@ formatters:
     - golines
   settings:
     gofumpt:
-      module-path: github.com/clnv/pgmesh
+      module-path: github.com/sundayfun/pgmesh
       extra-rules: true
     golines:
       max-len: 140
