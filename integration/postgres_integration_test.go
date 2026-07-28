@@ -25,6 +25,10 @@ func (tenantResolver) Tenant(tenantID int64) uint64 {
 	return uint64(tenantID)
 }
 
+func (tenantResolver) Messagekey(userID, _ int64, _ bool) uint64 {
+	return uint64(userID)
+}
+
 type postgresHarness struct {
 	pools map[string]*pgxpool.Pool
 }

@@ -10,13 +10,25 @@ import (
 	"github.com/sqlc-dev/plugin-sdk-go/plugin"
 )
 
-func generateWrapper(opts *options, queries []generatedQuery, imports *importSet) ([]*plugin.File, error) {
+func generateWrapper(
+	opts *options,
+	queries []generatedQuery,
+	imports *importSet,
+	catalog *plugin.Catalog,
+) ([]*plugin.File, error) {
 	routes, err := collectShardRoutes(queries)
 	if err != nil {
 		return nil, err
 	}
 	groups, err := collectStoreGroups(queries, opts)
 	if err != nil {
+		return nil, err
+	}
+	aliases, err := collectSQLCTypeAliases(opts, queries, catalog)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateSQLCTypeAliases(opts, queries, groups, aliases); err != nil {
 		return nil, err
 	}
 	if len(routes) > 0 {
@@ -55,6 +67,7 @@ func generateWrapper(opts *options, queries []generatedQuery, imports *importSet
 	}
 
 	if err := appendFile(derivedOutputFileName(opts.OutputFileName, "interfaces"), func(out *bytes.Buffer) {
+		writeSQLCTypeAliases(out, opts, aliases)
 		writeQueryInterfaces(out, opts, queries, groups)
 		if len(routes) > 0 {
 			writeShardResolverInterface(out, opts, routes)
@@ -136,8 +149,9 @@ func writeQueryInterfaces(
 ) {
 	writeSplitInterface(out, defaultReadInterface, queries, queryKindRead)
 	writeSplitInterface(out, defaultWriteInterface, queries, queryKindWrite)
+	writeShardArgWrappers(out, opts, queries)
 	for _, group := range groups {
-		writeStoreGroupInterfaces(out, &group)
+		writeStoreGroupInterfaces(out, opts, &group)
 	}
 	fmt.Fprintf(out, "// %s is the topology-independent generated query API.\n", opts.StoreInterfaceName)
 	fmt.Fprintf(out, "type %s interface {\n", opts.StoreInterfaceName)
@@ -152,7 +166,7 @@ func writeQueryInterfaces(
 	fmt.Fprintf(out, "var _ %s = (*%s)(nil)\n\n", targetName(opts, "Querier"), defaultStoreType)
 }
 
-func writeStoreGroupInterfaces(out *bytes.Buffer, group *storeGroup) {
+func writeStoreGroupInterfaces(out *bytes.Buffer, opts *options, group *storeGroup) {
 	reader := storeReaderInterfaceName(group.name)
 	writer := storeWriterInterfaceName(group.name)
 
@@ -161,7 +175,7 @@ func writeStoreGroupInterfaces(out *bytes.Buffer, group *storeGroup) {
 	for index := range group.queries {
 		query := &group.queries[index]
 		if query.kind == queryKindRead {
-			writeStoreInterfaceMethod(out, query)
+			writeStoreInterfaceMethod(out, opts, query)
 		}
 	}
 	out.WriteString("}\n\n")
@@ -171,7 +185,7 @@ func writeStoreGroupInterfaces(out *bytes.Buffer, group *storeGroup) {
 	for index := range group.queries {
 		query := &group.queries[index]
 		if query.kind == queryKindWrite {
-			writeStoreInterfaceMethod(out, query)
+			writeStoreInterfaceMethod(out, opts, query)
 		}
 	}
 	out.WriteString("}\n\n")
@@ -183,15 +197,34 @@ func writeStoreGroupInterfaces(out *bytes.Buffer, group *storeGroup) {
 	out.WriteString("}\n\n")
 }
 
-func writeStoreInterfaceMethod(out *bytes.Buffer, query *generatedQuery) {
+func writeStoreInterfaceMethod(out *bytes.Buffer, opts *options, query *generatedQuery) {
 	fmt.Fprintf(out, "\t// %s executes the generated %s query.\n", query.methodName, query.methodName)
 	fmt.Fprintf(
 		out,
 		"\t%s(%s)%s\n",
 		query.methodName,
-		storeParamsSignature(query.params),
-		resultsSignature(query.results),
+		storeParamsSignature(exportedSQLCArguments(opts, query.storeParams)),
+		resultsSignature(exportedSQLCTypes(opts, query.results)),
 	)
+}
+
+func writeShardArgWrappers(out *bytes.Buffer, opts *options, queries []generatedQuery) {
+	for _, query := range queries {
+		if query.shardArgs == nil {
+			continue
+		}
+		fmt.Fprintf(
+			out,
+			"// %s carries the sqlc argument and routing-only shard parameters for %s.\n",
+			query.shardArgs.name,
+			query.methodName,
+		)
+		fmt.Fprintf(out, "type %s struct {\n", query.shardArgs.name)
+		for _, field := range query.shardArgs.fields {
+			fmt.Fprintf(out, "\t%s %s\n", field.name, exportedSQLCType(opts, field.typ))
+		}
+		out.WriteString("}\n\n")
+	}
 }
 
 func writeReadQueries(out *bytes.Buffer, opts *options, queries []generatedQuery) {
@@ -591,7 +624,7 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generate
 	var errName string
 	if traced {
 		resultSignature, resultNames, errName = namedResultsSignature(
-			query.params,
+			query.storeParams,
 			query.results,
 			defaultReceiverName,
 			"storeOptions",
@@ -604,7 +637,7 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generate
 		defaultReceiverName,
 		receiverType,
 		query.methodName,
-		storeParamsSignature(query.params),
+		storeParamsSignature(query.storeParams),
 		resultSignature,
 	)
 	if traced {
@@ -648,7 +681,7 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generate
 
 	out.WriteString("\n\t// Apply options that can override the default route.\n")
 	out.WriteString("\toptions := applyQueryOptions(storeOptions...)\n")
-	args := callArguments(query.params)
+	args := strings.Join(query.callArgs, ", ")
 	if query.kind == queryKindRead {
 		out.WriteString("\n\t// Transactional reads must use their transaction.\n")
 		out.WriteString("\tif options.tx != nil {\n")
@@ -851,15 +884,15 @@ func writeShardResolverInterface(out *bytes.Buffer, opts *options, routes []shar
 	fmt.Fprintf(out, "type %s[SK any] interface {\n", opts.ResolverInterfaceName)
 	for _, route := range routes {
 		fmt.Fprintf(out, "\t// %s resolves the %q shard route.\n", route.methodName, route.name)
-		fmt.Fprintf(out, "\t%s(%s) SK\n", route.methodName, routeOperandsSignature(route.operands))
+		fmt.Fprintf(out, "\t%s(%s) SK\n", route.methodName, routeOperandsSignature(opts, route.operands))
 	}
 	out.WriteString("}\n\n")
 }
 
-func routeOperandsSignature(operands []routeOperand) string {
+func routeOperandsSignature(opts *options, operands []routeOperand) string {
 	parts := make([]string, 0, len(operands))
 	for _, operand := range operands {
-		parts = append(parts, operand.name+" "+operand.typ)
+		parts = append(parts, operand.name+" "+exportedSQLCType(opts, operand.typ))
 	}
 	return strings.Join(parts, ", ")
 }

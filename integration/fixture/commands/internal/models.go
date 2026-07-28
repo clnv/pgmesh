@@ -63,6 +63,20 @@ type Analysis struct {
 	ActiveWindow pgtype.Range[pgtype.Timestamptz]
 }
 
+type Message struct {
+	ID              interface{}
+	UserID          int64
+	ToUserOrGroupID int64
+	InGroup         bool
+	CreatedAt       pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
+}
+
+type MessageInbox struct {
+	ID              int64
+	ToUserOrGroupID pgtype.Int8
+}
+
 type User struct {
 	ID       int64
 	TenantID int64

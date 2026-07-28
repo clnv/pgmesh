@@ -51,6 +51,7 @@ sql:
 | `package` | string | sqlc output directory basename, otherwise `db` | Go package clause for wrappers. |
 | `internal_import_path` | string | empty | Imports sqlc output when wrappers use a separate package. |
 | `internal_import_alias` | string | `internal` | Optional valid Go alias for `internal_import_path`. |
+| `export_sqlc_types` | boolean | `false` | Re-exports sqlc parameter, row, model, and dependent package-local types used by the store API. Requires `internal_import_path`. |
 | `constructor` | exported identifier | `NewStore` | Public constructor that accepts an opaque `Topology`. |
 | `store_interface` | exported identifier | `Store` | Public topology-independent query interface. |
 | `resolver_interface` | exported identifier | `ShardResolver` | Public generic shard resolver interface. |
@@ -98,7 +99,7 @@ with `\`. `go_type` supports sqlc's string form and map form shown above.
 
 `zz_generated_store.go` produces:
 
-- `zz_generated_store_interfaces.go` for `Store`, query-group, and shard resolver contracts;
+- `zz_generated_store_interfaces.go` for optional sqlc type aliases plus `Store`, query-group, and shard resolver contracts;
 - `zz_generated_store_read.go` for the private read executor;
 - `zz_generated_store_write.go` for private primary and mirror execution;
 - `zz_generated_store.go` for query and store options, `Topology`, `Singleton`, `NewStore`, and routing;
@@ -144,11 +145,30 @@ codegen:
       package: "store"
       internal_import_path: "example.com/app/internal/db"
       internal_import_alias: "db"
+      export_sqlc_types: true
       output_file_name: "zz_generated_store.go"
 ```
 
+With `export_sqlc_types`, the wrapper package emits Go type aliases for the
+sqlc-owned types used by its generated query signatures. Callers can construct
+`store.GetUserParams` and receive `store.User` without importing the sqlc
+package:
+
+```go
+user, err := queries.Users().GetUser(ctx, &store.GetUserParams{
+    TenantID: tenantID,
+    ID:       userID,
+})
+```
+
+Aliases preserve the original type identity; they do not copy or convert
+values. The generator also aliases package-local enum or override types used by
+the exported params, rows, and models. Generation fails with an actionable
+error if an alias would collide with a generated pgmesh declaration.
+
 The checked-in [`integration/fixture/sqlc.yaml`](../../integration/fixture/sqlc.yaml)
-builds both same-package and separate-package configurations.
+builds same-package and separate-package configurations and exercises these
+aliases.
 
 ## Migration from legacy options
 

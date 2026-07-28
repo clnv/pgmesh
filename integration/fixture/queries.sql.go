@@ -7,6 +7,8 @@ package fixture
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createUser = `-- name: CreateUser :one
@@ -59,6 +61,34 @@ func (q *Queries) GetAnalysis(ctx context.Context, arg *GetAnalysisParams) (*Ana
 	return &i, err
 }
 
+const getTenantUserAnalysis = `-- name: GetTenantUserAnalysis :one
+SELECT users.id AS user_id, analyses.id AS analysis_id
+FROM users
+JOIN analyses ON analyses.tenant_id = users.tenant_id
+WHERE users.id = $1
+  AND analyses.id = $2
+`
+
+type GetTenantUserAnalysisParams struct {
+	UserID     int64
+	AnalysisID int64
+}
+
+type GetTenantUserAnalysisRow struct {
+	UserID     int64
+	AnalysisID int64
+}
+
+// kind: read
+// shard: tenant(tenant_id)
+// store: Analyses
+func (q *Queries) GetTenantUserAnalysis(ctx context.Context, arg *GetTenantUserAnalysisParams) (*GetTenantUserAnalysisRow, error) {
+	row := q.db.QueryRow(ctx, getTenantUserAnalysis, arg.UserID, arg.AnalysisID)
+	var i GetTenantUserAnalysisRow
+	err := row.Scan(&i.UserID, &i.AnalysisID)
+	return &i, err
+}
+
 const getUser = `-- name: GetUser :one
 SELECT id, tenant_id, name
 FROM users
@@ -78,6 +108,111 @@ func (q *Queries) GetUser(ctx context.Context, arg *GetUserParams) (*User, error
 	var i User
 	err := row.Scan(&i.ID, &i.TenantID, &i.Name)
 	return &i, err
+}
+
+const listP2PMessageIDsByChat = `-- name: ListP2PMessageIDsByChat :many
+SELECT id FROM "message"
+WHERE in_group = FALSE
+  AND LEAST(user_id, to_user_or_group_id) = LEAST($2::bigint, $3::bigint)
+  AND GREATEST(user_id, to_user_or_group_id) = GREATEST($2::bigint, $3::bigint)
+  AND created_at >= $4::timestamptz
+  AND deleted_at IS NULL
+  AND ($5::public.xid IS NULL OR id < $5::public.xid)
+ORDER BY id DESC
+LIMIT $1
+`
+
+type ListP2PMessageIDsByChatParams struct {
+	Limit        int32
+	UserID       int64
+	PeerID       int64
+	CreatedSince pgtype.Timestamptz
+	LastID       interface{}
+}
+
+// kind: read
+// shard: messageKey(user_id, to_user_or_group_id, in_group)
+// store: QueryMessage
+func (q *Queries) ListP2PMessageIDsByChat(ctx context.Context, arg *ListP2PMessageIDsByChatParams) ([]interface{}, error) {
+	rows, err := q.db.Query(ctx, listP2PMessageIDsByChat,
+		arg.Limit,
+		arg.UserID,
+		arg.PeerID,
+		arg.CreatedSince,
+		arg.LastID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []interface{}
+	for rows.Next() {
+		var id interface{}
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listP2PMessagesByChat = `-- name: ListP2PMessagesByChat :many
+SELECT id, user_id, to_user_or_group_id, in_group, created_at, deleted_at FROM "message"
+WHERE in_group = FALSE
+  AND LEAST(user_id, to_user_or_group_id) = LEAST($2::bigint, $3::bigint)
+  AND GREATEST(user_id, to_user_or_group_id) = GREATEST($2::bigint, $3::bigint)
+  AND created_at >= $4::timestamptz
+  AND deleted_at IS NULL
+  AND ($5::public.xid IS NULL OR id < $5::public.xid)
+ORDER BY id DESC
+LIMIT $1
+`
+
+type ListP2PMessagesByChatParams struct {
+	Limit        int32
+	UserID       int64
+	PeerID       int64
+	CreatedSince pgtype.Timestamptz
+	LastID       interface{}
+}
+
+// kind: read
+// shard: messageKey(user_id, to_user_or_group_id, in_group)
+// store: QueryMessage
+func (q *Queries) ListP2PMessagesByChat(ctx context.Context, arg *ListP2PMessagesByChatParams) ([]*Message, error) {
+	rows, err := q.db.Query(ctx, listP2PMessagesByChat,
+		arg.Limit,
+		arg.UserID,
+		arg.PeerID,
+		arg.CreatedSince,
+		arg.LastID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*Message
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.ToUserOrGroupID,
+			&i.InGroup,
+			&i.CreatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, &i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateUserName = `-- name: UpdateUserName :one

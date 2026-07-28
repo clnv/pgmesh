@@ -52,8 +52,48 @@ type ShardResolver[SK any] interface {
 }
 ```
 
-Route operands name SQL parameters, not result columns. They must resolve to
-compatible Go types anywhere the same route is used.
+Route operands normally name SQL parameters. They must resolve to compatible Go
+types anywhere the same route is used.
+
+Some shard-local queries do not need the shard value in their SQL. In that
+case, give the route a routing-only operand:
+
+```sql
+-- name: ListTenantAccounts :many
+-- kind: read
+-- shard: tenant(tenant_id)
+-- store: Accounts
+SELECT id, display_name
+FROM accounts
+ORDER BY id
+LIMIT @limit OFFSET @offset;
+```
+
+Although `tenant_id` is not a SQL parameter here, it names a column on the
+generated `Account` table model. The generator uses that model's `TenantID`
+field name and Go type, then wraps the original sqlc argument instead of passing
+the routing-only value to SQL:
+
+```go
+type ListTenantAccountsShardParams struct {
+    Arg      *ListTenantAccountsParams
+    TenantID int64
+}
+
+accounts, err := queries.Accounts().ListTenantAccounts(
+    ctx,
+    &db.ListTenantAccountsShardParams{
+        Arg:      &db.ListTenantAccountsParams{Limit: 100},
+        TenantID: tenantID,
+    },
+)
+```
+
+Generation fails if a routing-only operand does not name a field on the query's
+generated table model. For joins and ambiguous sqlc metadata, insert and result
+models plus tables named by the SQL's source relations take precedence over
+models inferred only from SQL parameters; matching models within the same tier
+must produce compatible field names and Go types.
 
 ## 4. Group every query
 
@@ -107,9 +147,10 @@ sqlc generate
 go test ./...
 ```
 
-Generation fails when metadata is missing, out of order, malformed, or refers
-to an unknown parameter. Treat that failure as part of the query review rather
-than moving routing into handwritten code.
+Generation fails when metadata is missing, out of order, malformed, or contains
+a routing-only operand that does not align with a generated table field. Treat
+that failure as part of the query review rather than moving routing into
+handwritten code.
 
 ## 6. Call the generated Store
 

@@ -9,7 +9,7 @@
 | Invalid or misplaced shard annotation | `shard` is malformed or appears later | Use `-- shard: route(operand, ...)` directly after `kind` |
 | Missing required store annotation | The query has no `store` comment | Add `-- store: ExportedGroup` immediately after optional `shard` metadata |
 | Invalid or misplaced store annotation | `store` is unexported, malformed, or appears after documentation | Use `-- store: ExportedGroup` directly after optional `shard` metadata |
-| Unknown shard operand | The route names a result column or nonexistent parameter | Name an input parameter recognized by sqlc |
+| Unknown shard operand | A routing-only operand matches neither a SQL parameter nor a field on the query's generated table model | Use the table column name, respecting the configured sqlc schema and rename options |
 | Conflicting route types | The same resolver method is inferred with incompatible operand types | Align the SQL parameter types or use different route names |
 | A sharded store contains an unsharded query | One generated store mixes routing models | Add shard metadata or move the model and queries to another generated package |
 | Generated code does not compile | sqlc and plugin options differ | Align pointer, rename, override, package, and parameter-limit options |

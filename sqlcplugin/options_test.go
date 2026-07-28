@@ -92,6 +92,7 @@ func TestParseOptionsDefaults(t *testing.T) {
 	assert.Equal(t, defaultRuntimePackage, opts.RuntimeImportPath)
 	assert.Equal(t, defaultResolver, opts.ResolverInterfaceName)
 	assert.Equal(t, defaultShardedNew, opts.ShardedConstructor)
+	assert.False(t, opts.ExportSQLCTypes)
 }
 
 func TestParseOptionsRetainsSupportedCustomizations(t *testing.T) {
@@ -102,6 +103,7 @@ func TestParseOptionsRetainsSupportedCustomizations(t *testing.T) {
 		"package":"store",
 		"internal_import_path":"example.test/project/internal/db",
 		"internal_import_alias":"db",
+		"export_sqlc_types":true,
 		"constructor":"BuildStore",
 		"ignore_mirror_error":true,
 		"store_interface":"QueryAPI",
@@ -127,6 +129,7 @@ func TestParseOptionsRetainsSupportedCustomizations(t *testing.T) {
 	assert.Equal(t, "store", opts.PackageName)
 	assert.Equal(t, "example.test/project/internal/db", opts.InternalImportPath)
 	assert.Equal(t, "db", opts.InternalImportAlias)
+	assert.True(t, opts.ExportSQLCTypes)
 	assert.Equal(t, "BuildStore", opts.ConstructorName)
 	assert.True(t, opts.IgnoreMirrorError)
 	assert.Equal(t, "QueryAPI", opts.StoreInterfaceName)
@@ -206,6 +209,7 @@ func TestParseOptionsValidation(t *testing.T) {
 		{name: "invalid package", options: `{"package":"store-api"}`, want: "must be a valid Go identifier"},
 		{name: "keyword package", options: `{"package":"type"}`, want: "must be a valid Go identifier"},
 		{name: "alias without import", options: `{"internal_import_alias":"db"}`, want: "requires internal_import_path"},
+		{name: "exports without import", options: `{"export_sqlc_types":true}`, want: "requires internal_import_path"},
 		{
 			name:    "alias import conflict",
 			options: `{"internal_import_path":"example.test/db","internal_import_alias":"pgx"}`,

@@ -10,8 +10,14 @@ import (
 type readQuerier interface {
 	// GetAnalysis executes the generated GetAnalysis query.
 	GetAnalysis(ctx context.Context, arg *GetAnalysisParams) (*Analysis, error)
+	// GetTenantUserAnalysis executes the generated GetTenantUserAnalysis query.
+	GetTenantUserAnalysis(ctx context.Context, arg *GetTenantUserAnalysisParams) (*GetTenantUserAnalysisRow, error)
 	// GetUser executes the generated GetUser query.
 	GetUser(ctx context.Context, arg *GetUserParams) (*User, error)
+	// ListP2PMessageIDsByChat executes the generated ListP2PMessageIDsByChat query.
+	ListP2PMessageIDsByChat(ctx context.Context, arg *ListP2PMessageIDsByChatParams) ([]interface{}, error)
+	// ListP2PMessagesByChat executes the generated ListP2PMessagesByChat query.
+	ListP2PMessagesByChat(ctx context.Context, arg *ListP2PMessagesByChatParams) ([]*Message, error)
 }
 
 // writeQuerier exposes generated write queries.
@@ -22,10 +28,32 @@ type writeQuerier interface {
 	UpdateUserName(ctx context.Context, arg *UpdateUserNameParams) (*User, error)
 }
 
+// GetTenantUserAnalysisShardParams carries the sqlc argument and routing-only shard parameters for GetTenantUserAnalysis.
+type GetTenantUserAnalysisShardParams struct {
+	Arg      *GetTenantUserAnalysisParams
+	TenantID int64
+}
+
+// ListP2PMessageIDsByChatShardParams carries the sqlc argument and routing-only shard parameters for ListP2PMessageIDsByChat.
+type ListP2PMessageIDsByChatShardParams struct {
+	Arg             *ListP2PMessageIDsByChatParams
+	ToUserOrGroupID int64
+	InGroup         bool
+}
+
+// ListP2PMessagesByChatShardParams carries the sqlc argument and routing-only shard parameters for ListP2PMessagesByChat.
+type ListP2PMessagesByChatShardParams struct {
+	Arg             *ListP2PMessagesByChatParams
+	ToUserOrGroupID int64
+	InGroup         bool
+}
+
 // AnalysesReader exposes read queries in the Analyses store group.
 type AnalysesReader interface {
 	// GetAnalysis executes the generated GetAnalysis query.
 	GetAnalysis(ctx context.Context, arg *GetAnalysisParams, storeOptions ...QueryOption) (*Analysis, error)
+	// GetTenantUserAnalysis executes the generated GetTenantUserAnalysis query.
+	GetTenantUserAnalysis(ctx context.Context, arg *GetTenantUserAnalysisShardParams, storeOptions ...QueryOption) (*GetTenantUserAnalysisRow, error)
 }
 
 // AnalysesWriter exposes write queries in the Analyses store group.
@@ -36,6 +64,24 @@ type AnalysesWriter interface {
 type Analyses interface {
 	AnalysesReader
 	AnalysesWriter
+}
+
+// QueryMessageReader exposes read queries in the QueryMessage store group.
+type QueryMessageReader interface {
+	// ListP2PMessageIDsByChat executes the generated ListP2PMessageIDsByChat query.
+	ListP2PMessageIDsByChat(ctx context.Context, arg *ListP2PMessageIDsByChatShardParams, storeOptions ...QueryOption) ([]interface{}, error)
+	// ListP2PMessagesByChat executes the generated ListP2PMessagesByChat query.
+	ListP2PMessagesByChat(ctx context.Context, arg *ListP2PMessagesByChatShardParams, storeOptions ...QueryOption) ([]*Message, error)
+}
+
+// QueryMessageWriter exposes write queries in the QueryMessage store group.
+type QueryMessageWriter interface {
+}
+
+// QueryMessage exposes all queries in its generated store group.
+type QueryMessage interface {
+	QueryMessageReader
+	QueryMessageWriter
 }
 
 // UsersReader exposes read queries in the Users store group.
@@ -62,6 +108,8 @@ type Users interface {
 type Store interface {
 	// Analyses returns the Analyses query group.
 	Analyses() Analyses
+	// QueryMessage returns the QueryMessage query group.
+	QueryMessage() QueryMessage
 	// Users returns the Users query group.
 	Users() Users
 }
@@ -72,6 +120,8 @@ var _ Querier = (*queryStore)(nil)
 
 // ShardResolver resolves generated query parameters to shard keys.
 type ShardResolver[SK any] interface {
+	// Messagekey resolves the "messageKey" shard route.
+	Messagekey(userID int64, toUserOrGroupID int64, inGroup bool) SK
 	// Tenant resolves the "tenant" shard route.
 	Tenant(tenantID int64) SK
 }

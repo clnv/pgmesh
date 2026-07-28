@@ -25,6 +25,8 @@ type options struct {
 	InternalImportPath string `json:"internal_import_path"`
 	// InternalImportAlias overrides the imported sqlc package qualifier.
 	InternalImportAlias string `json:"internal_import_alias"`
+	// ExportSQLCTypes aliases sqlc-owned types used by the generated store API.
+	ExportSQLCTypes bool `json:"export_sqlc_types"`
 	// ConstructorName is the public config-driven store constructor name.
 	ConstructorName string `json:"constructor"`
 	// IgnoreMirrorError makes generated writes discard non-NoRows mirror errors.
@@ -243,6 +245,9 @@ func validateOptions(opts *options) error {
 			return fmt.Errorf("internal_import_alias %q conflicts with a generated import", opts.InternalImportAlias)
 		}
 	}
+	if opts.ExportSQLCTypes && opts.InternalImportPath == "" {
+		return errors.New("export_sqlc_types requires internal_import_path")
+	}
 	type generatedImport struct {
 		qualifier string
 		path      string
@@ -281,35 +286,16 @@ func validateOptions(opts *options) error {
 		option string
 		value  string
 	}{
-		{option: "constructor", value: opts.ConstructorName},
+		{option: constructorOption, value: opts.ConstructorName},
 		{option: "store_interface", value: opts.StoreInterfaceName},
 		{option: "resolver_interface", value: opts.ResolverInterfaceName},
 		{option: "sharded_constructor", value: opts.ShardedConstructor},
 	}
 	seenNames := make(map[string]string, len(publicNames))
-	reservedNames := map[string]struct{}{
-		"QueryOption":        {},
-		"ReadFromPrimary":    {},
-		"ShardedOption":      {},
-		"Singleton":          {},
-		"SingletonOption":    {},
-		"StoreOption":        {},
-		"Topology":           {},
-		"WithDatabaseName":   {},
-		"WithLogger":         {},
-		"WithMeterProvider":  {},
-		"WithReadReplicas":   {},
-		"WithReplicaSet":     {},
-		"WithTracerProvider": {},
-		"WithTx":             {},
-		"WithVShardMapping":  {},
-		"WithWriteMirrors":   {},
-	}
-	if opts.InternalImportPath == "" {
-		reservedNames["DBTX"] = struct{}{}
-		reservedNames[defaultTargetNew] = struct{}{}
-		reservedNames[defaultTargetType] = struct{}{}
-		reservedNames["Querier"] = struct{}{}
+	fixedDeclarations := fixedGeneratedDeclarations(opts.InternalImportPath == "")
+	reservedNames := make(map[string]struct{}, len(fixedDeclarations))
+	for declaration := range fixedDeclarations {
+		reservedNames[declaration] = struct{}{}
 	}
 	for _, publicName := range publicNames {
 		if err := validateIdentifier(publicName.option, publicName.value, true); err != nil {
