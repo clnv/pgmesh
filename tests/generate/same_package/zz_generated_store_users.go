@@ -59,11 +59,17 @@ type Users interface {
 	UsersWriter
 }
 
+// WithUsersFactory configures an optional wrapper for the Users query group.
+// A nil factory leaves the generated query group unwrapped.
+func WithUsersFactory(createUsers func(Users) Users) StoreOption {
+	return func(options *storeOptions) { options.factories.Users = createUsers }
+}
+
 var _ Users = (*groupedMeshStore[uint8])(nil)
 
 // Users returns the Users query group.
 func (q *meshStore[SK]) Users() Users {
-	return &groupedMeshStore[SK]{store: q}
+	return q.groups.Users
 }
 
 // CopyUsers groups rows by physical shard and executes one copy per group.

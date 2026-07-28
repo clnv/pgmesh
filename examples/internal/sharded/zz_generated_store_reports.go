@@ -23,11 +23,17 @@ type Reports interface {
 	ReportsWriter
 }
 
+// WithReportsFactory configures an optional wrapper for the Reports query group.
+// A nil factory leaves the generated query group unwrapped.
+func WithReportsFactory(createReports func(Reports) Reports) StoreOption {
+	return func(options *storeOptions) { options.factories.Reports = createReports }
+}
+
 var _ Reports = (*groupedMeshStore[uint8])(nil)
 
 // Reports returns the Reports query group.
 func (q *meshStore[SK]) Reports() Reports {
-	return &groupedMeshStore[SK]{store: q}
+	return q.groups.Reports
 }
 
 // CountAccounts executes the generated query on its target shard.

@@ -108,7 +108,7 @@ func generateWrapper(
 	}
 	if err := appendFile(derivedOutputFileName(opts.OutputFileName, "sharded"), func(out *bytes.Buffer) {
 		if sharded {
-			writeShardedStore(out, opts)
+			writeShardedStore(out, opts, groups)
 		}
 	}); err != nil {
 		return nil, err
@@ -208,6 +208,25 @@ func writeStoreGroup(out *bytes.Buffer, opts *options, group *storeGroup) {
 	writeShardArgWrappers(out, opts, group.queries)
 	writeStoreGroupInterfaces(out, opts, group)
 
+	factoryName := storeFactoryOptionName(group.name)
+	fmt.Fprintf(out, "// %s configures an optional wrapper for the %s query group.\n", factoryName, group.name)
+	out.WriteString("// A nil factory leaves the generated query group unwrapped.\n")
+	fmt.Fprintf(
+		out,
+		"func %s(create%s func(%s) %s) StoreOption {\n",
+		factoryName,
+		group.name,
+		group.name,
+		group.name,
+	)
+	fmt.Fprintf(
+		out,
+		"\treturn func(options *storeOptions) { options.factories.%s = create%s }\n",
+		group.name,
+		group.name,
+	)
+	out.WriteString("}\n\n")
+
 	fmt.Fprintf(out, "var _ %s = (*%s[uint8])(nil)\n\n", group.name, defaultGroupType)
 	fmt.Fprintf(out, "// %s returns the %s query group.\n", group.name, group.name)
 	fmt.Fprintf(
@@ -218,12 +237,7 @@ func writeStoreGroup(out *bytes.Buffer, opts *options, group *storeGroup) {
 		group.name,
 		group.name,
 	)
-	fmt.Fprintf(
-		out,
-		"\treturn &%s[SK]{store: %s}\n",
-		defaultGroupType,
-		defaultReceiverName,
-	)
+	fmt.Fprintf(out, "\treturn %s.groups.%s\n", defaultReceiverName, group.name)
 	out.WriteString("}\n\n")
 
 	for index := range group.queries {
@@ -545,9 +559,16 @@ func writeStoreConfiguration(
 	out.WriteString("\ttracerProvider trace.TracerProvider\n")
 	out.WriteString("\tmeterProvider metric.MeterProvider\n")
 	out.WriteString("\tlogger *slog.Logger\n")
+	if len(groups) > 0 {
+		out.WriteString("\tfactories struct {\n")
+		for _, group := range groups {
+			fmt.Fprintf(out, "\t\t%s func(%s) %s\n", group.name, group.name, group.name)
+		}
+		out.WriteString("\t}\n")
+	}
 	out.WriteString("}\n\n")
 
-	out.WriteString("// StoreOption customizes telemetry for a generated store.\n")
+	out.WriteString("// StoreOption customizes a generated store.\n")
 	out.WriteString("type StoreOption func(*storeOptions)\n\n")
 	out.WriteString("// WithTracerProvider configures the provider used for routed query spans.\n")
 	out.WriteString("// A nil provider uses the global OpenTelemetry tracer provider.\n")
@@ -641,11 +662,46 @@ func writeStoreConfiguration(
 	if hasShardOperations(queries) {
 		fmt.Fprintf(out, "\tresolver %s[SK]\n", opts.ResolverInterfaceName)
 	}
+	if len(groups) > 0 {
+		out.WriteString("\tgroups struct {\n")
+		for _, group := range groups {
+			fmt.Fprintf(out, "\t\t%s %s\n", group.name, group.name)
+		}
+		out.WriteString("\t}\n")
+	}
 	out.WriteString("}\n\n")
 	fmt.Fprintf(out, "var _ %s = (*%s[uint8])(nil)\n\n", opts.StoreInterfaceName, defaultMeshStoreType)
 	if len(groups) > 0 {
 		fmt.Fprintf(out, "type %s[SK any] struct {\n", defaultGroupType)
 		fmt.Fprintf(out, "\tstore *%s[SK]\n", defaultMeshStoreType)
+		out.WriteString("}\n\n")
+
+		fmt.Fprintf(
+			out,
+			"func (%s *%s[SK]) initializeGroups(options storeOptions) {\n",
+			defaultReceiverName,
+			defaultMeshStoreType,
+		)
+		for _, group := range groups {
+			fmt.Fprintf(
+				out,
+				"\tinternal%s := &%s[SK]{store: %s}\n",
+				group.name,
+				defaultGroupType,
+				defaultReceiverName,
+			)
+			fmt.Fprintf(out, "\t%s.groups.%s = internal%s\n", defaultReceiverName, group.name, group.name)
+			fmt.Fprintf(out, "\tif create%s := options.factories.%s; create%s != nil {\n", group.name, group.name, group.name)
+			fmt.Fprintf(
+				out,
+				"\t\t%s.groups.%s = create%s(internal%s)\n",
+				defaultReceiverName,
+				group.name,
+				group.name,
+				group.name,
+			)
+			out.WriteString("\t}\n")
+		}
 		out.WriteString("}\n\n")
 	}
 
@@ -685,11 +741,17 @@ func writeStoreConfiguration(
 	out.WriteString("\t\tLink(0, replicaSet).\n")
 	out.WriteString("\t\tBuild()\n")
 	out.WriteString("\tif err != nil { return nil, err }\n")
-	fmt.Fprintf(
-		out,
-		"\treturn &%s[uint8]{mesh: mesh}, nil\n",
-		defaultMeshStoreType,
-	)
+	if len(groups) > 0 {
+		fmt.Fprintf(out, "\tstore := &%s[uint8]{mesh: mesh}\n", defaultMeshStoreType)
+		out.WriteString("\tstore.initializeGroups(options)\n")
+		out.WriteString("\treturn store, nil\n")
+	} else {
+		fmt.Fprintf(
+			out,
+			"\treturn &%s[uint8]{mesh: mesh}, nil\n",
+			defaultMeshStoreType,
+		)
+	}
 	out.WriteString("}\n\n")
 }
 
@@ -1402,6 +1464,7 @@ func writeGroupedCopyQueryMethod(out *bytes.Buffer, query *generatedQuery) {
 func writeShardedStore(
 	out *bytes.Buffer,
 	opts *options,
+	groups []storeGroup,
 ) {
 	out.WriteString("type shardDatabase struct {\n")
 	out.WriteString("\tname string\n")
@@ -1535,11 +1598,21 @@ func writeShardedStore(
 	out.WriteString("\t\tmeshOptions...,\n")
 	out.WriteString("\t)\n")
 	out.WriteString("\tif err != nil { return nil, err }\n")
-	fmt.Fprintf(
-		out,
-		"\treturn &%s[SK]{mesh: mesh, resolver: c.resolver}, nil\n",
-		defaultMeshStoreType,
-	)
+	if len(groups) > 0 {
+		fmt.Fprintf(
+			out,
+			"\tstore := &%s[SK]{mesh: mesh, resolver: c.resolver}\n",
+			defaultMeshStoreType,
+		)
+		out.WriteString("\tstore.initializeGroups(options)\n")
+		out.WriteString("\treturn store, nil\n")
+	} else {
+		fmt.Fprintf(
+			out,
+			"\treturn &%s[SK]{mesh: mesh, resolver: c.resolver}, nil\n",
+			defaultMeshStoreType,
+		)
+	}
 	out.WriteString("}\n\n")
 }
 

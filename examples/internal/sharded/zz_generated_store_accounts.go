@@ -36,11 +36,17 @@ type Accounts interface {
 	AccountsWriter
 }
 
+// WithAccountsFactory configures an optional wrapper for the Accounts query group.
+// A nil factory leaves the generated query group unwrapped.
+func WithAccountsFactory(createAccounts func(Accounts) Accounts) StoreOption {
+	return func(options *storeOptions) { options.factories.Accounts = createAccounts }
+}
+
 var _ Accounts = (*groupedMeshStore[uint8])(nil)
 
 // Accounts returns the Accounts query group.
 func (q *meshStore[SK]) Accounts() Accounts {
-	return &groupedMeshStore[SK]{store: q}
+	return q.groups.Accounts
 }
 
 // GetAccount executes the generated query on its target shard.

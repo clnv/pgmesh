@@ -106,3 +106,10 @@ func TestSnakeCaseIdentifier(t *testing.T) {
 		assert.Equal(t, test.want, snakeCaseIdentifier(test.name))
 	}
 }
+
+func TestStoreFactoryOptionName(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "WithIAMFactory", storeFactoryOptionName("IAM"))
+	assert.Equal(t, "WithQueryMessageFactory", storeFactoryOptionName("QueryMessage"))
+}

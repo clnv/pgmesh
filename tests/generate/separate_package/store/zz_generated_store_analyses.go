@@ -43,11 +43,17 @@ type Analyses interface {
 	AnalysesWriter
 }
 
+// WithAnalysesFactory configures an optional wrapper for the Analyses query group.
+// A nil factory leaves the generated query group unwrapped.
+func WithAnalysesFactory(createAnalyses func(Analyses) Analyses) StoreOption {
+	return func(options *storeOptions) { options.factories.Analyses = createAnalyses }
+}
+
 var _ Analyses = (*groupedMeshStore[uint8])(nil)
 
 // Analyses returns the Analyses query group.
 func (q *meshStore[SK]) Analyses() Analyses {
-	return &groupedMeshStore[SK]{store: q}
+	return q.groups.Analyses
 }
 
 // GetAnalysis executes the generated query on its target shard.

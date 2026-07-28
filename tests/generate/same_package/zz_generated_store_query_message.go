@@ -68,11 +68,17 @@ type QueryMessage interface {
 	QueryMessageWriter
 }
 
+// WithQueryMessageFactory configures an optional wrapper for the QueryMessage query group.
+// A nil factory leaves the generated query group unwrapped.
+func WithQueryMessageFactory(createQueryMessage func(QueryMessage) QueryMessage) StoreOption {
+	return func(options *storeOptions) { options.factories.QueryMessage = createQueryMessage }
+}
+
 var _ QueryMessage = (*groupedMeshStore[uint8])(nil)
 
 // QueryMessage returns the QueryMessage query group.
 func (q *meshStore[SK]) QueryMessage() QueryMessage {
-	return &groupedMeshStore[SK]{store: q}
+	return q.groups.QueryMessage
 }
 
 // ListP2PMessageIDsByChat executes the generated query on its target shard.

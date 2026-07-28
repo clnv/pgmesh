@@ -5,6 +5,7 @@ package samepackage_test
 import (
 	"context"
 	"net/netip"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,6 +39,72 @@ type postgresCase struct {
 	queries fixture.Store
 }
 
+type cachedUserKey struct {
+	tenantID int64
+	id       int64
+}
+
+type cachedUsersStore struct {
+	fixture.Users
+
+	mu    sync.Mutex
+	users map[cachedUserKey]*fixture.User
+	hits  int
+}
+
+func (s *cachedUsersStore) GetUser(
+	ctx context.Context,
+	arg *fixture.GetUserT,
+	options ...fixture.QueryOption,
+) (*fixture.User, error) {
+	if len(options) != 0 {
+		return s.Users.GetUser(ctx, arg, options...)
+	}
+
+	key := cachedUserKey{tenantID: arg.TenantID, id: arg.ID}
+	s.mu.Lock()
+	user := s.users[key]
+	if user != nil {
+		s.hits++
+	}
+	s.mu.Unlock()
+	if user != nil {
+		return user, nil
+	}
+
+	user, err := s.Users.GetUser(ctx, arg, fixture.ReadFromPrimary())
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.users[key] = user
+	s.mu.Unlock()
+	return user, nil
+}
+
+func (s *cachedUsersStore) UpdateUserName(
+	ctx context.Context,
+	arg *fixture.UpdateUserNameT,
+	options ...fixture.QueryOption,
+) (*fixture.User, error) {
+	user, err := s.Users.UpdateUserName(ctx, arg, options...)
+	if err != nil {
+		return user, err
+	}
+
+	key := cachedUserKey{tenantID: arg.TenantID, id: arg.ID}
+	s.mu.Lock()
+	delete(s.users, key)
+	s.mu.Unlock()
+	return user, nil
+}
+
+func (s *cachedUsersStore) cacheHits() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hits
+}
+
 func newPostgresHarness(t *testing.T) *postgresHarness {
 	t.Helper()
 	if !testdb.Enabled() {
@@ -67,7 +134,10 @@ func newPostgresHarness(t *testing.T) *postgresHarness {
 	return &postgresHarness{pools: pools}
 }
 
-func (h *postgresHarness) newShardedStore(t *testing.T) fixture.Store {
+func (h *postgresHarness) newShardedStore(
+	t *testing.T,
+	options ...fixture.StoreOption,
+) fixture.Store {
 	t.Helper()
 	queries, err := fixture.NewStore(
 		t.Context(),
@@ -86,6 +156,7 @@ func (h *postgresHarness) newShardedStore(t *testing.T) fixture.Store {
 			fixture.WithVShardMapping("shard0", []uint64{0}, "shard0-mirror"),
 			fixture.WithVShardMapping("shard1", []uint64{1}),
 		),
+		options...,
 	)
 	require.NoError(t, err)
 	return queries
@@ -134,6 +205,65 @@ func (h *postgresHarness) assertUserAbsent(t *testing.T, database string, id, te
 		tenantID,
 	).Scan(&ignored)
 	require.ErrorIs(t, err, pgx.ErrNoRows, "user unexpectedly exists in %s", database)
+}
+
+func TestPostgresStoreFactoryIntegration(t *testing.T) {
+	harness := newPostgresHarness(t)
+	harness.reset(t)
+	harness.insert(t, "shard0-primary", 90, 2, "before")
+
+	factoryCalls := 0
+	var cachedUsers *cachedUsersStore
+	queries := harness.newShardedStore(
+		t,
+		fixture.WithUsersFactory(func(internalStore fixture.Users) fixture.Users {
+			factoryCalls++
+			cachedUsers = &cachedUsersStore{
+				Users: internalStore,
+				users: make(map[cachedUserKey]*fixture.User),
+			}
+			return cachedUsers
+		}),
+	)
+
+	require.Equal(t, 1, factoryCalls)
+	assert.Same(t, cachedUsers, queries.Users())
+	assert.Same(t, cachedUsers, queries.Users())
+
+	arg := &fixture.GetUserParams{TenantID: 2, ID: 90}
+	first, err := queries.Users().GetUser(t.Context(), arg)
+	require.NoError(t, err)
+	assert.Equal(t, "before", first.Name)
+	assert.Zero(t, cachedUsers.cacheHits())
+
+	updated, err := queries.Users().UpdateUserName(
+		t.Context(),
+		&fixture.UpdateUserNameParams{TenantID: 2, ID: 90, Name: "after"},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "after", updated.Name)
+	assert.Equal(t, "after", harness.userName(t, "shard0-primary", 90, 2))
+
+	refreshed, err := queries.Users().GetUser(t.Context(), arg)
+	require.NoError(t, err)
+	assert.Equal(t, "after", refreshed.Name)
+	assert.Zero(t, cachedUsers.cacheHits())
+
+	_, err = harness.pools["shard0-primary"].Exec(
+		t.Context(),
+		"UPDATE users SET name = 'fresh' WHERE id = 90 AND tenant_id = 2",
+	)
+	require.NoError(t, err)
+
+	cached, err := queries.Users().GetUser(t.Context(), arg)
+	require.NoError(t, err)
+	assert.Equal(t, "after", cached.Name)
+	assert.Equal(t, 1, cachedUsers.cacheHits())
+
+	fresh, err := queries.Users().GetUser(t.Context(), arg, fixture.ReadFromPrimary())
+	require.NoError(t, err)
+	assert.Equal(t, "fresh", fresh.Name)
+	assert.Equal(t, 1, cachedUsers.cacheHits())
 }
 
 func TestPostgresTopologyIntegration(t *testing.T) {

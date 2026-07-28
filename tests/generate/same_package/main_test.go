@@ -339,6 +339,19 @@ func (r *recordingMessageKeyResolver) MessageKey(
 	return 0
 }
 
+type usersStoreWrapper struct {
+	Users
+
+	listed []*User
+}
+
+func (s *usersStoreWrapper) ListAllUsers(
+	context.Context,
+	...QueryOption,
+) ([]*User, error) {
+	return s.listed, nil
+}
+
 func buildTestStore(t *testing.T, primary, replica *fakeDB, mirrors ...*fakeDB) Store {
 	t.Helper()
 
@@ -363,6 +376,136 @@ func buildTestStore(t *testing.T, primary, replica *fakeDB, mirrors ...*fakeDB) 
 	)
 	require.NoError(t, err)
 	return store
+}
+
+func TestGeneratedStoreFactoriesWrapSelectedGroupsOnce(t *testing.T) {
+	t.Parallel()
+
+	topologies := []struct {
+		name   string
+		create func(*fakeDB) Topology
+	}{
+		{
+			name: "singleton",
+			create: func(primary *fakeDB) Topology {
+				return Singleton(primary)
+			},
+		},
+		{
+			name: "sharded",
+			create: func(primary *fakeDB) Topology {
+				return Sharded(
+					1,
+					pgmesh.ConstantShardHashFor[uint64](0),
+					tenantResolver{},
+					WithReplicaSet("main", primary),
+					WithVShardMapping("main", []uint64{0}),
+				)
+			},
+		},
+	}
+
+	for _, topology := range topologies {
+		t.Run(topology.name, func(t *testing.T) {
+			t.Parallel()
+
+			log := &callLog{}
+			primary := &fakeDB{
+				name:  "primary",
+				log:   log,
+				users: []*User{{ID: 1, TenantID: 2, Name: "database"}},
+			}
+			cached := []*User{{ID: 10, TenantID: 20, Name: "cached"}}
+			factoryCalls := 0
+			var wrapper *usersStoreWrapper
+
+			store, err := NewStore(
+				t.Context(),
+				topology.create(primary),
+				WithUsersFactory(func(internalStore Users) Users {
+					factoryCalls++
+					wrapper = &usersStoreWrapper{Users: internalStore, listed: cached}
+					return wrapper
+				}),
+			)
+			require.NoError(t, err)
+			assert.Equal(t, 1, factoryCalls)
+			assert.Same(t, wrapper, store.Users())
+			assert.Same(t, wrapper, store.Users())
+			firstAnalyses := store.Analyses()
+			secondAnalyses := store.Analyses()
+			assert.Same(t, firstAnalyses, secondAnalyses)
+
+			listed, err := store.Users().ListAllUsers(t.Context())
+			require.NoError(t, err)
+			assert.Equal(t, cached, listed)
+			assert.Empty(t, log.snapshot())
+
+			user, err := store.Users().GetUser(
+				t.Context(),
+				&GetUserParams{ID: 1, TenantID: 2},
+			)
+			require.NoError(t, err)
+			assert.Equal(t, int64(10), user.ID)
+			assert.Equal(t, []string{"primary"}, log.snapshot())
+		})
+	}
+}
+
+func TestGeneratedStoreFactoryOptionsUseLastValue(t *testing.T) {
+	t.Parallel()
+
+	primary := &fakeDB{name: "primary", log: &callLog{}}
+	firstCalls := 0
+	secondCalls := 0
+	firstFactory := WithUsersFactory(func(internalStore Users) Users {
+		firstCalls++
+		return &usersStoreWrapper{Users: internalStore}
+	})
+	var secondWrapper *usersStoreWrapper
+	secondFactory := WithUsersFactory(func(internalStore Users) Users {
+		secondCalls++
+		secondWrapper = &usersStoreWrapper{Users: internalStore}
+		return secondWrapper
+	})
+
+	store, err := NewStore(
+		t.Context(),
+		Singleton(primary),
+		firstFactory,
+		secondFactory,
+	)
+	require.NoError(t, err)
+	assert.Zero(t, firstCalls)
+	assert.Equal(t, 1, secondCalls)
+	assert.Same(t, secondWrapper, store.Users())
+
+	cleared, err := NewStore(
+		t.Context(),
+		Singleton(primary),
+		firstFactory,
+		WithUsersFactory(nil),
+	)
+	require.NoError(t, err)
+	assert.Zero(t, firstCalls)
+	_, internal := cleared.Users().(*groupedMeshStore[uint8])
+	assert.True(t, internal)
+}
+
+func TestGeneratedStoreFactoryRunsOnlyAfterSuccessfulTopologyBuild(t *testing.T) {
+	t.Parallel()
+
+	factoryCalls := 0
+	_, err := NewStore(
+		t.Context(),
+		Singleton(nil),
+		WithUsersFactory(func(internalStore Users) Users {
+			factoryCalls++
+			return internalStore
+		}),
+	)
+	require.ErrorContains(t, err, "database primary is nil")
+	assert.Zero(t, factoryCalls)
 }
 
 func buildTwoShardStore(

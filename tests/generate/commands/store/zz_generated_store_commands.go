@@ -47,11 +47,17 @@ type Commands interface {
 	CommandsWriter
 }
 
+// WithCommandsFactory configures an optional wrapper for the Commands query group.
+// A nil factory leaves the generated query group unwrapped.
+func WithCommandsFactory(createCommands func(Commands) Commands) StoreOption {
+	return func(options *storeOptions) { options.factories.Commands = createCommands }
+}
+
 var _ Commands = (*groupedMeshStore[uint8])(nil)
 
 // Commands returns the Commands query group.
 func (q *meshStore[SK]) Commands() Commands {
-	return &groupedMeshStore[SK]{store: q}
+	return q.groups.Commands
 }
 
 // BatchGetCommandUser executes the generated query on its target shard.

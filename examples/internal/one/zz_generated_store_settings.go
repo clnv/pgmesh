@@ -28,11 +28,17 @@ type Settings interface {
 	SettingsWriter
 }
 
+// WithSettingsFactory configures an optional wrapper for the Settings query group.
+// A nil factory leaves the generated query group unwrapped.
+func WithSettingsFactory(createSettings func(Settings) Settings) StoreOption {
+	return func(options *storeOptions) { options.factories.Settings = createSettings }
+}
+
 var _ Settings = (*groupedMeshStore[uint8])(nil)
 
 // Settings returns the Settings query group.
 func (q *meshStore[SK]) Settings() Settings {
-	return &groupedMeshStore[SK]{store: q}
+	return q.groups.Settings
 }
 
 // GetSetting executes the generated query on its target shard.
