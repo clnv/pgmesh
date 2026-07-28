@@ -30,6 +30,25 @@ func TestStructName(t *testing.T) {
 	}
 }
 
+func TestRouteMethodName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		want string
+	}{
+		{name: "tenant", want: "Tenant"},
+		{name: "messageKey", want: "MessageKey"},
+		{name: "message_key", want: "MessageKey"},
+		{name: "user_id", want: "UserID"},
+		{name: "p2p", want: "P2P"},
+	}
+
+	for _, test := range tests {
+		assert.Equal(t, test.want, routeMethodName(test.name, &options{}))
+	}
+}
+
 func TestPackageNameForImport(t *testing.T) {
 	t.Parallel()
 

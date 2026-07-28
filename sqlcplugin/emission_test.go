@@ -1042,7 +1042,7 @@ func TestGenerateUsesSQLSourceTableWhenColumnProvenanceIsMissing(t *testing.T) {
 	assert.Contains(
 		t,
 		got,
-		"Messagekey(userID int64, toUserOrGroupID int64, inGroup bool) SK",
+		"MessageKey(userID int64, toUserOrGroupID int64, inGroup bool) SK",
 	)
 }
 

@@ -25,7 +25,7 @@ func (tenantResolver) Tenant(tenantID int64) uint64 {
 	return uint64(tenantID)
 }
 
-func (tenantResolver) Messagekey(userID, _ int64, _ bool) uint64 {
+func (tenantResolver) MessageKey(userID, _ int64, _ bool) uint64 {
 	return uint64(userID)
 }
 

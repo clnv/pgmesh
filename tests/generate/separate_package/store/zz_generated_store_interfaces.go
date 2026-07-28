@@ -95,8 +95,8 @@ var _ db.Querier = (*queryStore)(nil)
 
 // ShardResolver resolves generated query parameters to shard keys.
 type ShardResolver[SK any] interface {
-	// Messagekey resolves the "messageKey" shard route.
-	Messagekey(userID int64, toUserOrGroupID int64, inGroup bool) SK
+	// MessageKey resolves the "messageKey" shard route.
+	MessageKey(userID int64, toUserOrGroupID int64, inGroup bool) SK
 	// Tenant resolves the "tenant" shard route.
 	Tenant(tenantID int64) SK
 }
