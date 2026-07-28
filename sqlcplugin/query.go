@@ -28,6 +28,14 @@ func querySpecs(req *plugin.GenerateRequest, opts *options) ([]generatedQuery, *
 	if err != nil {
 		return nil, nil, err
 	}
+	for _, query := range queries {
+		if query.shardArgs == nil {
+			continue
+		}
+		for _, field := range query.shardArgs.fields {
+			resolver.addImportsForType(field.typ)
+		}
+	}
 	return queries, resolver.imports, nil
 }
 
@@ -71,8 +79,9 @@ type routeOperand struct {
 }
 
 type shardArgWrapper struct {
-	name   string
-	fields []argument
+	name    string
+	fields  []argument
+	sqlcArg queryValue
 }
 
 const (
@@ -1016,8 +1025,9 @@ func wrapQueriesWithExternalShardOperands(queries []generatedQuery, opts *option
 
 func wrapExternalShardOperands(query *generatedQuery, opts *options) error {
 	wrapper := &shardArgWrapper{
-		name:   query.methodName + "ShardParams",
-		fields: nil,
+		name:    query.methodName + "ShardParams",
+		fields:  nil,
+		sqlcArg: queryValue{},
 	}
 	usedFields := make(map[string]string)
 	appendField := func(name, typ, source string) error {
@@ -1040,10 +1050,13 @@ func wrapExternalShardOperands(query *generatedQuery, opts *options) error {
 	switch {
 	case arg.isEmpty():
 	case arg.emit:
-		if err := appendField("Arg", arg.defineType(opts), "sqlc argument"); err != nil {
-			return err
+		for _, field := range arg.structType.fields {
+			if err := appendField(field.name, field.typ, "SQL parameter "+field.dbName); err != nil {
+				return err
+			}
 		}
-		callArgs = append(callArgs, "arg.Arg")
+		wrapper.sqlcArg = arg
+		callArgs = append(callArgs, "arg.sqlcParams()")
 	case arg.structType != nil:
 		for _, field := range arg.structType.fields {
 			if err := appendField(field.name, field.typ, "SQL parameter "+field.dbName); err != nil {
@@ -1101,9 +1114,6 @@ func wrappedRouteOperandExpression(arg queryValue, dbName string, opts *options)
 		for _, field := range arg.structType.fields {
 			if field.dbName != dbName {
 				continue
-			}
-			if arg.emit {
-				return "arg.Arg." + field.name, true
 			}
 			return "arg." + field.name, true
 		}

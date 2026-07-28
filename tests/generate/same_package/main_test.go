@@ -222,11 +222,9 @@ func TestGeneratedRoutingOnlyShardArgument(t *testing.T) {
 	row, err := store.Analyses().GetTenantUserAnalysis(
 		t.Context(),
 		&GetTenantUserAnalysisShardParams{
-			Arg: &GetTenantUserAnalysisParams{
-				UserID:     10,
-				AnalysisID: 20,
-			},
-			TenantID: 42,
+			UserID:     10,
+			AnalysisID: 20,
+			TenantID:   42,
 		},
 	)
 	require.NoError(t, err)
@@ -259,7 +257,7 @@ func TestGeneratedP2PShardArgumentUsesMessageModel(t *testing.T) {
 	_, err = store.QueryMessage().ListP2PMessageIDsByChat(
 		t.Context(),
 		&ListP2PMessageIDsByChatShardParams{
-			Arg:             &ListP2PMessageIDsByChatParams{UserID: 11},
+			UserID:          11,
 			ToUserOrGroupID: 22,
 			InGroup:         false,
 		},

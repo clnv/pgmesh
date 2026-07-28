@@ -104,6 +104,7 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 			"store_querier_read.go",
 			"store_querier_write.go",
 			"store_querier.go",
+			"store_querier_messages.go",
 			"store_querier_sharded.go",
 		},
 		generatedFileNames(resp),
@@ -111,10 +112,10 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 	interfaces := generatedFileContents(t, resp, "store_querier_interfaces.go")
 	assert.Contains(t, interfaces, "type readQuerier interface")
 	assert.Contains(t, interfaces, "type writeQuerier interface")
-	assert.Contains(t, interfaces, "type MessagesReader interface")
-	assert.Contains(t, interfaces, "type MessagesWriter interface")
-	assert.Contains(t, interfaces, "type Messages interface")
 	assert.Contains(t, interfaces, "type Store interface")
+	assert.NotContains(t, interfaces, "type MessagesReader interface")
+	assert.NotContains(t, interfaces, "type MessagesWriter interface")
+	assert.NotContains(t, interfaces, "type Messages interface")
 	assert.NotContains(t, interfaces, "type readQueries struct")
 	assert.NotContains(t, interfaces, "type writeQueries struct")
 
@@ -136,7 +137,17 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 	assert.Contains(t, store, "// WithWriteMirrors appends databases that synchronously receive writes.")
 	assert.NotContains(t, store, "type OneStore")
 	assert.NotContains(t, store, "type ShardedStore")
+	assert.NotContains(t, store, "func (q *groupedMeshStore[SK]) CreateMessage")
+	assert.NotContains(t, store, "func (q *groupedMeshStore[SK]) ListMessagesWithIDs")
 	assert.NotContains(t, generatedSource(resp), "oneStore")
+
+	messages := generatedFileContents(t, resp, "store_querier_messages.go")
+	assert.Contains(t, messages, "type MessagesReader interface")
+	assert.Contains(t, messages, "type MessagesWriter interface")
+	assert.Contains(t, messages, "type Messages interface")
+	assert.Contains(t, messages, "func (q *meshStore[SK]) Messages() Messages")
+	assert.Contains(t, messages, "func (q *groupedMeshStore[SK]) CreateMessage")
+	assert.Contains(t, messages, "func (q *groupedMeshStore[SK]) ListMessagesWithIDs")
 
 	sharded := generatedFileContents(t, resp, "store_querier_sharded.go")
 	assert.NotContains(t, sharded, "type ShardedConfig")
@@ -232,6 +243,35 @@ func TestGenerateGroupsPublicStoreQueries(t *testing.T) {
 	assert.Contains(t, groupedBody, "q.store.mesh.Shard")
 	assert.NotContains(t, groupedBody, "q.mesh")
 	assert.Contains(t, got, "func (q *groupedMeshStore[SK]) Ping(")
+
+	accounts := generatedFileContents(t, response, "store_querier_accounts.go")
+	assert.Contains(t, accounts, "type Accounts interface")
+	assert.Contains(t, accounts, "func (q *groupedMeshStore[SK]) GetAccount(")
+	assert.Contains(t, accounts, "func (q *groupedMeshStore[SK]) CreateAccount(")
+	assert.NotContains(t, accounts, "func (q *groupedMeshStore[SK]) Ping(")
+
+	system := generatedFileContents(t, response, "store_querier_system.go")
+	assert.Contains(t, system, "type System interface")
+	assert.Contains(t, system, "func (q *groupedMeshStore[SK]) Ping(")
+	assert.NotContains(t, system, "func (q *groupedMeshStore[SK]) GetAccount(")
+}
+
+func TestStoreGroupOutputFileNamesAvoidCollisions(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(
+		t,
+		[]string{
+			"store_querier_group_interfaces.go",
+			"store_querier_iam.go",
+			"store_querier_group_iam.go",
+		},
+		storeGroupOutputFileNames("store_querier.go", []storeGroup{
+			{name: "Interfaces"},
+			{name: "IAM"},
+			{name: "Iam"},
+		}),
+	)
 }
 
 func TestGenerateRejectsInvalidStoreGroups(t *testing.T) {
@@ -700,7 +740,7 @@ func TestGenerateWrapsRoutingOnlyShardOperand(t *testing.T) {
 	int8Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int8"}
 	int4Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int4"}
 	users := &plugin.Identifier{Schema: "public", Name: "users"}
-	response, err := Generate(t.Context(), &plugin.GenerateRequest{
+	request := &plugin.GenerateRequest{
 		Settings: &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "db"}},
 		Catalog: &plugin.Catalog{
 			DefaultSchema: "public",
@@ -731,11 +771,25 @@ func TestGenerateWrapsRoutingOnlyShardOperand(t *testing.T) {
 			"query_parameter_limit":1,
 			"emit_params_struct_pointers":true
 		}`),
-	})
+	}
+	response, err := Generate(t.Context(), request)
 	require.NoError(t, err)
 
 	got := generatedSource(response)
-	assert.Contains(t, got, "type ListTenantUsersShardParams struct {\n\tArg      *ListTenantUsersParams\n\tTenantID int64\n}")
+	assert.Contains(
+		t,
+		got,
+		"type ListTenantUsersShardParams struct {\n\tLimit    int32\n\tOffset   int32\n\tTenantID int64\n}",
+	)
+	assert.Contains(
+		t,
+		got,
+		"func (arg *ListTenantUsersShardParams) sqlcParams() *ListTenantUsersParams {\n"+
+			"\treturn &ListTenantUsersParams{\n"+
+			"\t\tLimit:  arg.Limit,\n"+
+			"\t\tOffset: arg.Offset,\n"+
+			"\t}\n}",
+	)
 	assert.Contains(
 		t,
 		got,
@@ -748,9 +802,29 @@ func TestGenerateWrapsRoutingOnlyShardOperand(t *testing.T) {
 	)
 	body := generatedMethodBody(t, got, "groupedMeshStore[SK]", "ListTenantUsers")
 	assert.Contains(t, body, "shardKey = q.store.resolver.Tenant(arg.TenantID)")
-	assert.Contains(t, body, "return shard.Read().ListTenantUsers(ctx, arg.Arg)")
+	assert.Contains(t, body, "return shard.Read().ListTenantUsers(ctx, arg.sqlcParams())")
 	assert.Contains(t, got, "ListTenantUsers(ctx context.Context, arg *ListTenantUsersParams) ([]int64, error)")
 	assert.Contains(t, got, "Tenant(tenantID int64) SK")
+
+	request.PluginOptions = []byte(`{
+		"package":"db",
+		"sql_package":"pgx/v5",
+		"query_parameter_limit":1
+	}`)
+	valueResponse, err := Generate(t.Context(), request)
+	require.NoError(t, err)
+	valueSource := generatedSource(valueResponse)
+	assert.Contains(
+		t,
+		valueSource,
+		"func (arg ListTenantUsersShardParams) sqlcParams() ListTenantUsersParams {\n"+
+			"\treturn ListTenantUsersParams{",
+	)
+	assert.Contains(
+		t,
+		valueSource,
+		"ListTenantUsers(ctx context.Context, arg ListTenantUsersShardParams, storeOptions ...QueryOption)",
+	)
 }
 
 func TestGenerateUsesRenamedModelFieldForRoutingOnlyShardOperand(t *testing.T) {
@@ -1375,6 +1449,7 @@ func TestGenerateQualifiesSqlcTypesForSeparatePackage(t *testing.T) {
 			"generated_store_read.go",
 			"generated_store_write.go",
 			"generated_store.go",
+			"generated_store_users.go",
 			"generated_store_sharded.go",
 		},
 		generatedFileNames(response),
@@ -1468,14 +1543,24 @@ func TestGenerateExportsSQLCTypesForSeparatePackage(t *testing.T) {
 		"type NullStatus = db.NullStatus",
 		"type Status = db.Status",
 		"type User = db.User",
-		"CreateUser(ctx context.Context, arg CreateUserParams, storeOptions ...QueryOption) (User, error)",
-		"FindUser(ctx context.Context, arg FindUserParams, storeOptions ...QueryOption) (FindUserRow, error)",
 	}
 	for _, check := range checks {
 		assert.Contains(t, interfaces, check)
 	}
 	assert.NotContains(t, interfaces, "type Queries =")
 	assert.NotContains(t, interfaces, "type Querier =")
+
+	usersFile := generatedFileContents(t, response, "store_querier_users.go")
+	assert.Contains(
+		t,
+		usersFile,
+		"CreateUser(ctx context.Context, arg CreateUserParams, storeOptions ...QueryOption) (User, error)",
+	)
+	assert.Contains(
+		t,
+		usersFile,
+		"FindUser(ctx context.Context, arg FindUserParams, storeOptions ...QueryOption) (FindUserRow, error)",
+	)
 }
 
 func TestGenerateRejectsExportedSQLCTypeNameConflicts(t *testing.T) {
