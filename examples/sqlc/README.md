@@ -16,6 +16,6 @@ the account store with shard annotations; `internal/one` contains the settings
 store with its own model and no shard routes. Both are called through the same
 generated API shape even though their internal routing differs.
 
-The larger checked-in fixture under `integration/fixture` compiles generated
-same-package and separate-package layouts and is exercised against five local
-PostgreSQL databases by `just verify`.
+The checked-in cases under `tests/generate` compile same-package,
+separate-package, and command-shape layouts and are exercised against five
+local PostgreSQL databases by `just verify`.

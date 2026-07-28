@@ -1,7 +1,7 @@
 import "base.just"
 
 export COMPOSE := env("COMPOSE", "docker compose")
-export COMPOSE_FILE := env("COMPOSE_FILE", "integration/docker-compose.yaml")
+export COMPOSE_FILE := env("COMPOSE_FILE", "tests/integration/docker-compose.yaml")
 export COMPOSE_PROJECT := env("COMPOSE_PROJECT", "pgmesh-integration")
 export PGMESH_SHARD0_PRIMARY_PORT := env("PGMESH_SHARD0_PRIMARY_PORT", "25432")
 export PGMESH_SHARD0_REPLICA0_PORT := env("PGMESH_SHARD0_REPLICA0_PORT", "25433")
@@ -19,7 +19,24 @@ integration-down:
 
 # Run the Docker-backed integration tests.
 integration-test:
-    PGMESH_INTEGRATION=1 go test -p=1 -race -count=1 -tags=integration -timeout=2m ./integration/...
+    PGMESH_INTEGRATION=1 go test -p=1 -race -count=1 -tags=integration -timeout=2m ./tests/generate/...
+
+# Test one generated case against an already-running PostgreSQL topology.
+integration-test-case case:
+    PGMESH_INTEGRATION=1 go test -race -count=1 -tags=integration -timeout=2m "./tests/generate/{{ case }}"
+
+# Regenerate one case, run it against its own schema, and clean up.
+integration-case case:
+    #!/usr/bin/env bash
+    set -eu
+    export PGMESH_TEST_SCHEMA="../generate/{{ case }}/schema.sql"
+    cleanup() {
+        "{{ just_executable() }}" integration-down
+    }
+    trap cleanup EXIT INT TERM
+    "{{ just_executable() }}" generate-case "{{ case }}"
+    "{{ just_executable() }}" integration-up
+    "{{ just_executable() }}" integration-test-case "{{ case }}"
 
 # Run all executable examples against the local topology.
 examples-smoke:

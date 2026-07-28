@@ -166,9 +166,9 @@ values. The generator also aliases package-local enum or override types used by
 the exported params, rows, and models. Generation fails with an actionable
 error if an alias would collide with a generated pgmesh declaration.
 
-The checked-in [`integration/fixture/sqlc.yaml`](../../integration/fixture/sqlc.yaml)
-builds same-package and separate-package configurations and exercises these
-aliases.
+The checked-in
+[`tests/generate/separate_package/sqlc.yaml`](../../tests/generate/separate_package/sqlc.yaml)
+builds the separate-package configuration and exercises these aliases.
 
 ## Migration from legacy options
 
@@ -202,7 +202,7 @@ an actionable unknown-field error.
 This repository pins sqlc 1.31.1:
 
 ```bash
-just generate-fixture
+just generate-tests
 just --justfile examples/justfile generate
 git diff --exit-code
 ```
