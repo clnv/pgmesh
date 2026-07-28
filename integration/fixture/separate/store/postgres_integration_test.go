@@ -47,14 +47,14 @@ func TestSeparatePackageStoreAgainstPostgres(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	created, err := queries.CreateUser(
+	created, err := queries.Users().CreateUser(
 		t.Context(),
 		&db.CreateUserParams{ID: 99001, TenantID: 99002, Name: "separate"},
 	)
 	require.NoError(t, err)
 	require.NotNil(t, created)
 
-	got, err := queries.GetUser(
+	got, err := queries.Users().GetUser(
 		t.Context(),
 		&db.GetUserParams{TenantID: created.TenantID, ID: created.ID},
 	)

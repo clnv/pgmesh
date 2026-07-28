@@ -161,7 +161,7 @@ func TestGenerateRetainsPublicNamesAndFixedInternals(t *testing.T) {
 	request.Queries = []*plugin.Query{{
 		Name:     "GetUser",
 		Cmd:      ":one",
-		Comments: []string{"kind: read", "shard: tenant(tenant_id)"},
+		Comments: []string{"kind: read", "shard: tenant(tenant_id)", "store: Users"},
 		Params: []*plugin.Parameter{{
 			Number: 1,
 			Column: &plugin.Column{Name: "tenant_id", Type: int8Type, NotNull: true},

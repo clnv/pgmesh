@@ -180,9 +180,9 @@ func TestGeneratedTopologyOptionsCloneInputs(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	_, err = store.GetUser(t.Context(), &GetUserParams{TenantID: 1, ID: 2})
+	_, err = store.Users().GetUser(t.Context(), &GetUserParams{TenantID: 1, ID: 2})
 	require.NoError(t, err)
-	_, err = store.CreateUser(t.Context(), &CreateUserParams{ID: 1, TenantID: 2, Name: "user"})
+	_, err = store.Users().CreateUser(t.Context(), &CreateUserParams{ID: 1, TenantID: 2, Name: "user"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"replica", "primary", "mirror"}, log.snapshot())
 }
@@ -204,9 +204,9 @@ func TestGeneratedStoreBehavior(t *testing.T) {
 					&fakeDB{name: "replica", log: log},
 				)
 
-				_, err := store.GetUser(t.Context(), &GetUserParams{TenantID: 1, ID: 2})
+				_, err := store.Users().GetUser(t.Context(), &GetUserParams{TenantID: 1, ID: 2})
 				require.NoError(t, err)
-				_, err = store.GetUser(t.Context(), &GetUserParams{TenantID: 1, ID: 2}, ReadFromPrimary())
+				_, err = store.Users().GetUser(t.Context(), &GetUserParams{TenantID: 1, ID: 2}, ReadFromPrimary())
 				require.NoError(t, err)
 				assert.Equal(t, []string{"replica", "primary"}, log.snapshot())
 			},
@@ -221,7 +221,7 @@ func TestGeneratedStoreBehavior(t *testing.T) {
 					&fakeDB{name: "replica", log: log},
 				)
 
-				_, err := store.GetUser(t.Context(), &GetUserParams{TenantID: 1, ID: 2}, nil)
+				_, err := store.Users().GetUser(t.Context(), &GetUserParams{TenantID: 1, ID: 2}, nil)
 				require.NoError(t, err)
 				assert.Equal(t, []string{"replica"}, log.snapshot())
 			},
@@ -238,7 +238,7 @@ func TestGeneratedStoreBehavior(t *testing.T) {
 					&fakeDB{name: "mirror-after-missing", log: log},
 				)
 
-				user, err := store.CreateUser(t.Context(), &CreateUserParams{ID: 1, TenantID: 2, Name: "user"})
+				user, err := store.Users().CreateUser(t.Context(), &CreateUserParams{ID: 1, TenantID: 2, Name: "user"})
 				require.NoError(t, err)
 				require.NotNil(t, user)
 				assert.Equal(t, []string{"primary", "mirror", "mirror-after-missing"}, log.snapshot())
@@ -256,7 +256,7 @@ func TestGeneratedStoreBehavior(t *testing.T) {
 					&fakeDB{name: "mirror1", log: log},
 				)
 
-				_, err := store.CreateUser(t.Context(), &CreateUserParams{ID: 1, TenantID: 2, Name: "user"})
+				_, err := store.Users().CreateUser(t.Context(), &CreateUserParams{ID: 1, TenantID: 2, Name: "user"})
 				require.NoError(t, err)
 				assert.Equal(t, []string{"primary", "mirror0", "mirror1"}, log.snapshot())
 			},
@@ -274,7 +274,7 @@ func TestGeneratedStoreBehavior(t *testing.T) {
 					&fakeDB{name: "mirror-not-called", log: log},
 				)
 
-				user, err := store.CreateUser(t.Context(), &CreateUserParams{ID: 1, TenantID: 2, Name: "user"})
+				user, err := store.Users().CreateUser(t.Context(), &CreateUserParams{ID: 1, TenantID: 2, Name: "user"})
 				require.ErrorIs(t, err, mirrorErr)
 				require.NotNil(t, user, "primary result must be retained when a mirror fails")
 				assert.Equal(t, []string{"primary", "mirror"}, log.snapshot())
@@ -292,7 +292,7 @@ func TestGeneratedStoreBehavior(t *testing.T) {
 					&fakeDB{name: "mirror", log: log},
 				)
 
-				user, err := store.CreateUser(t.Context(), &CreateUserParams{ID: 1, TenantID: 2, Name: "user"})
+				user, err := store.Users().CreateUser(t.Context(), &CreateUserParams{ID: 1, TenantID: 2, Name: "user"})
 				require.ErrorIs(t, err, primaryErr)
 				assert.Nil(t, user)
 				assert.Equal(t, []string{"primary"}, log.snapshot())
@@ -310,9 +310,9 @@ func TestGeneratedStoreBehavior(t *testing.T) {
 				)
 				tx := &fakeTx{fakeDB: &fakeDB{name: "tx", log: log}}
 
-				_, err := store.GetUser(t.Context(), &GetUserParams{TenantID: 1, ID: 2}, WithTx(tx))
+				_, err := store.Users().GetUser(t.Context(), &GetUserParams{TenantID: 1, ID: 2}, WithTx(tx))
 				require.NoError(t, err)
-				_, err = store.CreateUser(
+				_, err = store.Users().CreateUser(
 					t.Context(),
 					&CreateUserParams{ID: 1, TenantID: 2, Name: "user"},
 					WithTx(tx),

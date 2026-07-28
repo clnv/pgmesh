@@ -11,6 +11,9 @@ and passed with `WithTx`; the generated `Store` deliberately suppresses mirror
 fan-out for that call. Transactional writes therefore need a separate outbox,
 CDC, or replay path before a shard cutover.
 
+The example selects `Accounts()` once and passes its `AccountsWriter`
+capability to the normal and transactional write helpers.
+
 See the [shard-expansion guide](../../docs/how-to/add-write-mirrors.md) for the
 complete old-to-new rollout and rollback sequence.
 

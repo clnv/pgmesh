@@ -9,6 +9,22 @@ import (
 	"context"
 )
 
+const countAccounts = `-- name: CountAccounts :one
+SELECT COUNT(*)
+FROM accounts
+WHERE tenant_id = $1
+`
+
+// kind: read
+// shard: tenant(tenant_id)
+// store: Reports
+func (q *Queries) CountAccounts(ctx context.Context, tenantID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countAccounts, tenantID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getAccount = `-- name: GetAccount :one
 SELECT id, tenant_id, display_name
 FROM accounts
@@ -22,6 +38,7 @@ type GetAccountParams struct {
 
 // kind: read
 // shard: tenant(tenant_id)
+// store: Accounts
 func (q *Queries) GetAccount(ctx context.Context, arg *GetAccountParams) (*Account, error) {
 	row := q.db.QueryRow(ctx, getAccount, arg.TenantID, arg.ID)
 	var i Account
@@ -44,6 +61,7 @@ type UpdateAccountNameParams struct {
 
 // kind: write
 // shard: tenant(tenant_id)
+// store: Accounts
 func (q *Queries) UpdateAccountName(ctx context.Context, arg *UpdateAccountNameParams) (*Account, error) {
 	row := q.db.QueryRow(ctx, updateAccountName, arg.TenantID, arg.ID, arg.DisplayName)
 	var i Account
@@ -68,6 +86,7 @@ type UpsertAccountParams struct {
 
 // kind: write
 // shard: tenant(tenant_id)
+// store: Accounts
 func (q *Queries) UpsertAccount(ctx context.Context, arg *UpsertAccountParams) (*Account, error) {
 	row := q.db.QueryRow(ctx, upsertAccount, arg.ID, arg.TenantID, arg.DisplayName)
 	var i Account

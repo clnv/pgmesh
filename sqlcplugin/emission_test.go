@@ -40,7 +40,7 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 		Queries: []*plugin.Query{{
 			Name:     "ListMessagesWithIDs",
 			Cmd:      ":many",
-			Comments: []string{"kind: read"},
+			Comments: []string{"kind: read", "store: Messages"},
 			Text:     "SELECT * FROM message WHERE id = ANY(@ids::public.xid[])",
 			Params: []*plugin.Parameter{{
 				Number: 1,
@@ -58,7 +58,7 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 		}, {
 			Name:     "CreateMessage",
 			Cmd:      ":one",
-			Comments: []string{"kind: write", "CreateMessage can keep normal comments after the kind annotation."},
+			Comments: []string{"kind: write", "store: Messages", "CreateMessage can keep normal comments after the annotations."},
 			Text:     "INSERT INTO message (id, created_at) VALUES ($1, $2) RETURNING *",
 			Params: []*plugin.Parameter{{
 				Number: 1,
@@ -111,6 +111,9 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 	interfaces := generatedFileContents(t, resp, "store_querier_interfaces.go")
 	assert.Contains(t, interfaces, "type readQuerier interface")
 	assert.Contains(t, interfaces, "type writeQuerier interface")
+	assert.Contains(t, interfaces, "type MessagesReader interface")
+	assert.Contains(t, interfaces, "type MessagesWriter interface")
+	assert.Contains(t, interfaces, "type Messages interface")
 	assert.Contains(t, interfaces, "type Store interface")
 	assert.NotContains(t, interfaces, "type readQueries struct")
 	assert.NotContains(t, interfaces, "type writeQueries struct")
@@ -152,7 +155,7 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 		"type writeQuerier interface {\n\t// CreateMessage executes the generated CreateMessage query.\n"+
 			"\tCreateMessage(ctx context.Context, arg *CreateMessageParams) (*Message, error)\n}",
 	)
-	assert.Contains(t, got, "type Store interface")
+	assert.Contains(t, got, "type Store interface {\n\t// Messages returns the Messages query group.\n\tMessages() Messages\n}")
 	assert.Contains(t, got, "type queryStore struct {\n\t*readQueries\n\t*writeQueries\n}")
 	assert.Contains(t, got, "var _ readQuerier = (*readQueries)(nil)")
 	assert.Contains(t, got, "var _ writeQuerier = (*writeQueries)(nil)")
@@ -163,6 +166,129 @@ func TestGenerateUsesArrayOverridesWithoutLeakingStructImports(t *testing.T) {
 	writeBody := generatedMethodBody(t, got, "writeQueries", "CreateMessage")
 	assert.Contains(t, writeBody, "mirror.CreateMessage")
 	assert.NotContains(t, got, `"time"`)
+}
+
+func TestGenerateGroupsPublicStoreQueries(t *testing.T) {
+	t.Parallel()
+
+	response, err := Generate(t.Context(), &plugin.GenerateRequest{
+		Settings: &plugin.Settings{
+			Engine:  "postgresql",
+			Codegen: &plugin.Codegen{Out: "db"},
+		},
+		Catalog: &plugin.Catalog{DefaultSchema: "public"},
+		Queries: []*plugin.Query{
+			{
+				Name:     "GetAccount",
+				Cmd:      ":exec",
+				Comments: []string{"kind: read", "store: Accounts"},
+			},
+			{
+				Name:     "CreateAccount",
+				Cmd:      ":exec",
+				Comments: []string{"kind: write", "store: Accounts"},
+			},
+			{
+				Name:     "Ping",
+				Cmd:      ":exec",
+				Comments: []string{"kind: read", "store: System"},
+			},
+		},
+		PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5"}`),
+	})
+	require.NoError(t, err)
+
+	got := generatedSource(response)
+	reader := generatedInterfaceBody(t, got, "AccountsReader")
+	assert.Contains(t, reader, "GetAccount(ctx context.Context, storeOptions ...QueryOption) error")
+	assert.NotContains(t, reader, "CreateAccount")
+
+	writer := generatedInterfaceBody(t, got, "AccountsWriter")
+	assert.Contains(t, writer, "CreateAccount(ctx context.Context, storeOptions ...QueryOption) error")
+	assert.NotContains(t, writer, "GetAccount")
+
+	group := generatedInterfaceBody(t, got, "Accounts")
+	assert.Contains(t, group, "AccountsReader")
+	assert.Contains(t, group, "AccountsWriter")
+
+	store := generatedInterfaceBody(t, got, "Store")
+	assert.Contains(t, store, "Accounts() Accounts")
+	assert.Contains(t, store, "System() System")
+	assert.NotContains(t, store, "GetAccount")
+	assert.NotContains(t, store, "CreateAccount")
+	assert.NotContains(t, store, "Ping(ctx")
+
+	assert.Contains(t, got, "type groupedMeshStore[SK any] struct")
+	assert.Contains(t, got, "var _ Accounts = (*groupedMeshStore[uint8])(nil)")
+	assert.Contains(t, got, "func (q *meshStore[SK]) Accounts() Accounts")
+	assert.Contains(t, got, "return &groupedMeshStore[SK]{store: q}")
+	assert.Contains(
+		t,
+		got,
+		"func (q *groupedMeshStore[SK]) GetAccount(ctx context.Context, storeOptions ...QueryOption) (err error)",
+	)
+	groupedBody := generatedMethodBody(t, got, "groupedMeshStore[SK]", "GetAccount")
+	assert.Contains(t, groupedBody, "q.store.mesh.StartSpan")
+	assert.Contains(t, groupedBody, "q.store.mesh.Shard")
+	assert.NotContains(t, groupedBody, "q.mesh")
+	assert.Contains(t, got, "func (q *groupedMeshStore[SK]) Ping(")
+}
+
+func TestGenerateRejectsInvalidStoreGroups(t *testing.T) {
+	t.Parallel()
+
+	request := func(queries ...*plugin.Query) *plugin.GenerateRequest {
+		return &plugin.GenerateRequest{
+			Settings: &plugin.Settings{
+				Engine:  "postgresql",
+				Codegen: &plugin.Codegen{Out: "db"},
+			},
+			Catalog:       &plugin.Catalog{DefaultSchema: "public"},
+			Queries:       queries,
+			PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5"}`),
+		}
+	}
+	query := func(name, store string) *plugin.Query {
+		comments := []string{"kind: read"}
+		if store != "" {
+			comments = append(comments, "store: "+store)
+		}
+		return &plugin.Query{Name: name, Cmd: ":exec", Comments: comments}
+	}
+
+	tests := []struct {
+		name    string
+		request *plugin.GenerateRequest
+		want    string
+	}{
+		{
+			name:    "missing annotation",
+			request: request(query("GetAccount", "")),
+			want:    "missing required store annotation",
+		},
+		{
+			name:    "root store interface",
+			request: request(query("GetAccount", "Store")),
+			want:    "conflicts with store interface",
+		},
+		{
+			name: "another group derived interface",
+			request: request(
+				query("GetAccount", "Accounts"),
+				query("GetAccountAudit", "AccountsReader"),
+			),
+			want: "declaration AccountsReader",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := Generate(t.Context(), test.request)
+			require.ErrorContains(t, err, test.want)
+		})
+	}
 }
 
 func generatedMethodBody(t *testing.T, source, receiverType, methodName string) string {
@@ -176,6 +302,17 @@ func generatedMethodBody(t *testing.T, source, receiverType, methodName string) 
 		end = strings.Index(rest, "\n}\n")
 	}
 	require.NotEqual(t, -1, end, "generated output missing end of %s method", methodName)
+	return rest[:end+3]
+}
+
+func generatedInterfaceBody(t *testing.T, source, name string) string {
+	t.Helper()
+
+	start := strings.Index(source, "type "+name+" interface {")
+	require.NotEqual(t, -1, start, "generated output missing %s interface", name)
+	rest := source[start:]
+	end := strings.Index(rest, "\n}\n")
+	require.NotEqual(t, -1, end, "generated output missing end of %s interface", name)
 	return rest[:end+3]
 }
 
@@ -253,58 +390,84 @@ func TestClassifyQuery(t *testing.T) {
 		query     *plugin.Query
 		want      queryKind
 		wantRoute *routeAnnotation
+		wantStore string
 		wantErr   string
 	}{
 		{
 			name: "select",
 			query: &plugin.Query{
 				Name:     "ListMessages",
-				Comments: []string{"kind: read"},
+				Comments: []string{"kind: read", "store: Messages"},
 			},
-			want: queryKindRead,
+			want:      queryKindRead,
+			wantStore: "Messages",
 		},
 		{
 			name: "shard route",
 			query: &plugin.Query{
 				Name:     "ListMessages",
-				Comments: []string{"kind: read", "shard: p2p(user_id, peer_id)", "documentation"},
+				Comments: []string{"kind: read", "shard: p2p(user_id, peer_id)", "store: Messages", "documentation"},
 			},
 			want:      queryKindRead,
 			wantRoute: &routeAnnotation{name: "p2p", operands: []string{"user_id", "peer_id"}},
+			wantStore: "Messages",
+		},
+		{
+			name: "store group",
+			query: &plugin.Query{
+				Name:     "ListMessages",
+				Comments: []string{"kind: read", "store: Messages", "documentation"},
+			},
+			want:      queryKindRead,
+			wantStore: "Messages",
+		},
+		{
+			name: "shard route and store group",
+			query: &plugin.Query{
+				Name:     "ListMessages",
+				Comments: []string{"kind: read", "shard: inbox(user_id)", "store: Messages"},
+			},
+			want:      queryKindRead,
+			wantRoute: &routeAnnotation{name: "inbox", operands: []string{"user_id"}},
+			wantStore: "Messages",
 		},
 		{
 			name: "shard route without operands",
 			query: &plugin.Query{
 				Name:     "GetGlobalSetting",
-				Comments: []string{"kind: read", "shard: global()"},
+				Comments: []string{"kind: read", "shard: global()", "store: Settings"},
 			},
 			want:      queryKindRead,
 			wantRoute: &routeAnnotation{name: "global", operands: nil},
+			wantStore: "Settings",
 		},
 		{
 			name: "insert returning",
 			query: &plugin.Query{
 				Name:     "CreateMessage",
-				Comments: []string{"kind: write"},
+				Comments: []string{"kind: write", "store: Messages"},
 				Text:     "INSERT INTO message (id) VALUES ($1) RETURNING *",
 			},
-			want: queryKindWrite,
+			want:      queryKindWrite,
+			wantStore: "Messages",
 		},
 		{
 			name: "allows comments after annotation",
 			query: &plugin.Query{
 				Name:     "UpdateMessage",
-				Comments: []string{"kind: write", "normal comment"},
+				Comments: []string{"kind: write", "store: Messages", "normal comment"},
 			},
-			want: queryKindWrite,
+			want:      queryKindWrite,
+			wantStore: "Messages",
 		},
 		{
 			name: "falls back to leading sql comment",
 			query: &plugin.Query{
 				Name: "CreateMessage",
-				Text: "-- name: CreateMessage :one\n-- kind: write\nINSERT INTO message (id) VALUES ($1) RETURNING *",
+				Text: "-- name: CreateMessage :one\n-- kind: write\n-- store: Messages\nINSERT INTO message (id) VALUES ($1) RETURNING *",
 			},
-			want: queryKindWrite,
+			want:      queryKindWrite,
+			wantStore: "Messages",
 		},
 		{
 			name: "kind annotation must be adjacent to sqlc name",
@@ -323,6 +486,14 @@ func TestClassifyQuery(t *testing.T) {
 			wantErr: "shard annotation must immediately follow",
 		},
 		{
+			name: "store annotation must be adjacent to metadata",
+			query: &plugin.Query{
+				Name: "ListMessages",
+				Text: "-- name: ListMessages :many\n-- kind: read\n\n-- store: Messages\nSELECT 1",
+			},
+			wantErr: "store annotation must immediately follow",
+		},
+		{
 			name: "shard annotation must be second",
 			query: &plugin.Query{
 				Name:     "ListMessages",
@@ -337,6 +508,30 @@ func TestClassifyQuery(t *testing.T) {
 				Comments: []string{"kind: read", "shard: user_id"},
 			},
 			wantErr: "malformed shard annotation",
+		},
+		{
+			name: "store annotation must follow shard metadata",
+			query: &plugin.Query{
+				Name:     "ListMessages",
+				Comments: []string{"kind: read", "store: Messages", "shard: inbox(user_id)"},
+			},
+			wantErr: "shard annotation must immediately follow",
+		},
+		{
+			name: "store annotation must precede documentation",
+			query: &plugin.Query{
+				Name:     "ListMessages",
+				Comments: []string{"kind: read", "documentation", "store: Messages"},
+			},
+			wantErr: "store annotation must immediately follow",
+		},
+		{
+			name: "store annotation must be exported",
+			query: &plugin.Query{
+				Name:     "ListMessages",
+				Comments: []string{"kind: read", "store: messages"},
+			},
+			wantErr: "expected an exported Go identifier",
 		},
 		{
 			name: "invalid shard route name",
@@ -371,6 +566,14 @@ func TestClassifyQuery(t *testing.T) {
 			wantErr: "missing required kind annotation",
 		},
 		{
+			name: "missing store annotation",
+			query: &plugin.Query{
+				Name:     "ListMessages",
+				Comments: []string{"kind: read"},
+			},
+			wantErr: "missing required store annotation",
+		},
+		{
 			name: "annotation must be first comment",
 			query: &plugin.Query{
 				Name:     "ListMessages",
@@ -392,7 +595,7 @@ func TestClassifyQuery(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, route, err := classifyQuery(tt.query)
+			got, route, store, err := classifyQuery(tt.query)
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
 				return
@@ -400,6 +603,7 @@ func TestClassifyQuery(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 			assert.Equal(t, tt.wantRoute, route)
+			assert.Equal(t, tt.wantStore, store)
 		})
 	}
 }
@@ -415,7 +619,7 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 			{
 				Name:     "ListP2PMessages",
 				Cmd:      ":many",
-				Comments: []string{"kind: read", "shard: p2p(user_id, peer_id)"},
+				Comments: []string{"kind: read", "shard: p2p(user_id, peer_id)", "store: Messages"},
 				Params: []*plugin.Parameter{
 					{Number: 1, Column: &plugin.Column{Name: "user_id", Type: int8Type, NotNull: true}},
 					{Number: 2, Column: &plugin.Column{Name: "peer_id", Type: int8Type, NotNull: true}},
@@ -425,7 +629,7 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 			{
 				Name:     "CreateP2PMessage",
 				Cmd:      ":one",
-				Comments: []string{"kind: write", "shard: p2p(user_id, peer_id)"},
+				Comments: []string{"kind: write", "shard: p2p(user_id, peer_id)", "store: Messages"},
 				Params: []*plugin.Parameter{
 					{Number: 1, Column: &plugin.Column{Name: "user_id", Type: int8Type, NotNull: true}},
 					{Number: 2, Column: &plugin.Column{Name: "peer_id", Type: int8Type, NotNull: true}},
@@ -457,11 +661,11 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 		"type Store interface",
 		"func ReadFromPrimary() QueryOption",
 		"func WithTx(tx pgx.Tx) QueryOption",
-		"func (q *meshStore[SK]) ListP2PMessages(ctx context.Context, arg *ListP2PMessagesParams, storeOptions ...QueryOption) (result []int64, err error)",
+		"func (q *groupedMeshStore[SK]) ListP2PMessages(ctx context.Context, arg *ListP2PMessagesParams, storeOptions ...QueryOption) (result []int64, err error)",
 		"var shardKey SK",
-		"shardKey = q.resolver.P2P(arg.UserID, arg.PeerID)",
-		`q.mesh.StartSpan(ctx, "Store", "ListP2PMessages", pgmesh.QueryKindRead)`,
-		`q.mesh.StartSpan(ctx, "Store", "CreateP2PMessage", pgmesh.QueryKindWrite)`,
+		"shardKey = q.store.resolver.P2P(arg.UserID, arg.PeerID)",
+		`q.store.mesh.StartSpan(ctx, "Store", "ListP2PMessages", pgmesh.QueryKindRead)`,
+		`q.store.mesh.StartSpan(ctx, "Store", "CreateP2PMessage", pgmesh.QueryKindWrite)`,
 		"// Trace the query and record its returned error.",
 		"defer func() { querySpan.End(err) }()",
 		"// Resolve the shard key for this topology.",
@@ -478,11 +682,11 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 	for _, check := range checks {
 		assert.Contains(t, got, check)
 	}
-	meshReadBody := generatedMethodBody(t, got, "meshStore[SK]", "ListP2PMessages")
+	meshReadBody := generatedMethodBody(t, got, "groupedMeshStore[SK]", "ListP2PMessages")
 	assert.NotContains(t, meshReadBody, "var queryErr error")
 	assert.NotContains(t, meshReadBody, "queryErr =")
 	assert.Equal(t, 1, strings.Count(got, "type meshStore[SK any] struct"))
-	assert.Equal(t, 1, strings.Count(got, "func (q *meshStore[SK]) ListP2PMessages("))
+	assert.Equal(t, 1, strings.Count(got, "func (q *groupedMeshStore[SK]) ListP2PMessages("))
 	assert.NotContains(t, got, "defaultShardKey")
 	assert.NotContains(t, got, "type databaseStore struct")
 	assert.NotContains(t, got, "type shardedStore[SK any] struct")
@@ -501,7 +705,7 @@ func TestGenerateRejectsMixedShardedAndUnshardedQueries(t *testing.T) {
 			{
 				Name:     "GetUser",
 				Cmd:      ":one",
-				Comments: []string{"kind: read", "shard: tenant(tenant_id)"},
+				Comments: []string{"kind: read", "shard: tenant(tenant_id)", "store: Users"},
 				Params: []*plugin.Parameter{{
 					Number: 1,
 					Column: &plugin.Column{Name: "tenant_id", Type: int8Type, NotNull: true},
@@ -511,7 +715,7 @@ func TestGenerateRejectsMixedShardedAndUnshardedQueries(t *testing.T) {
 			{
 				Name:     "ListUsers",
 				Cmd:      ":many",
-				Comments: []string{"kind: read"},
+				Comments: []string{"kind: read", "store: Users"},
 				Columns:  []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}},
 			},
 		},
@@ -531,7 +735,7 @@ func TestGenerateResolvesShardOperandsForIndividualParameters(t *testing.T) {
 		Queries: []*plugin.Query{{
 			Name:     "GetP2PMessage",
 			Cmd:      ":one",
-			Comments: []string{"kind: read", "shard: p2p(user_id, peer_id)"},
+			Comments: []string{"kind: read", "shard: p2p(user_id, peer_id)", "store: Messages"},
 			Params: []*plugin.Parameter{
 				{Number: 1, Column: &plugin.Column{Name: "user_id", Type: int8Type, NotNull: true}},
 				{Number: 2, Column: &plugin.Column{Name: "peer_id", Type: int8Type, NotNull: true}},
@@ -542,7 +746,7 @@ func TestGenerateResolvesShardOperandsForIndividualParameters(t *testing.T) {
 	})
 	require.NoError(t, err)
 	got := generatedSource(response)
-	assert.Contains(t, got, "shardKey = q.resolver.P2P(userID, peerID)")
+	assert.Contains(t, got, "shardKey = q.store.resolver.P2P(userID, peerID)")
 }
 
 func TestGenerateIgnoreMirrorErrorOption(t *testing.T) {
@@ -554,7 +758,7 @@ func TestGenerateIgnoreMirrorErrorOption(t *testing.T) {
 		Queries: []*plugin.Query{{
 			Name:     "DeleteUser",
 			Cmd:      ":exec",
-			Comments: []string{"kind: write"},
+			Comments: []string{"kind: write", "store: Users"},
 		}},
 		PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5","ignore_mirror_error":true}`),
 	})
@@ -606,7 +810,7 @@ func TestGenerateRejectsInvalidRoutingConfigurations(t *testing.T) {
 		{
 			name: "unknown operand",
 			request: base(&plugin.Query{
-				Name: "GetMessage", Cmd: ":one", Comments: []string{"kind: read", "shard: inbox(missing_id)"},
+				Name: "GetMessage", Cmd: ":one", Comments: []string{"kind: read", "shard: inbox(missing_id)", "store: Messages"},
 				Params:  []*plugin.Parameter{{Number: 1, Column: &plugin.Column{Name: "inbox_id", Type: int8Type, NotNull: true}}},
 				Columns: []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}},
 			}),
@@ -616,7 +820,7 @@ func TestGenerateRejectsInvalidRoutingConfigurations(t *testing.T) {
 			name: "route rename must remain exported",
 			request: func() *plugin.GenerateRequest {
 				r := base(&plugin.Query{
-					Name: "GetMessage", Cmd: ":one", Comments: []string{"kind: read", "shard: inbox(inbox_id)"},
+					Name: "GetMessage", Cmd: ":one", Comments: []string{"kind: read", "shard: inbox(inbox_id)", "store: Messages"},
 					Params:  []*plugin.Parameter{{Number: 1, Column: &plugin.Column{Name: "inbox_id", Type: int8Type, NotNull: true}}},
 					Columns: []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}},
 				})
@@ -628,7 +832,7 @@ func TestGenerateRejectsInvalidRoutingConfigurations(t *testing.T) {
 		{
 			name: "copyfrom route",
 			request: base(&plugin.Query{
-				Name: "CreateMessages", Cmd: ":copyfrom", Comments: []string{"kind: write", "shard: inbox(inbox_id)"},
+				Name: "CreateMessages", Cmd: ":copyfrom", Comments: []string{"kind: write", "shard: inbox(inbox_id)", "store: Messages"},
 				Params: []*plugin.Parameter{{Number: 1, Column: &plugin.Column{Name: "inbox_id", Type: int8Type, NotNull: true}}},
 			}),
 			want: "cannot declare shard metadata",
@@ -636,7 +840,7 @@ func TestGenerateRejectsInvalidRoutingConfigurations(t *testing.T) {
 		{
 			name: "batch route",
 			request: base(&plugin.Query{
-				Name: "GetMessages", Cmd: ":batchmany", Comments: []string{"kind: read", "shard: inbox(inbox_id)"},
+				Name: "GetMessages", Cmd: ":batchmany", Comments: []string{"kind: read", "shard: inbox(inbox_id)", "store: Messages"},
 				Params:  []*plugin.Parameter{{Number: 1, Column: &plugin.Column{Name: "inbox_id", Type: int8Type, NotNull: true}}},
 				Columns: []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}},
 			}),
@@ -648,14 +852,14 @@ func TestGenerateRejectsInvalidRoutingConfigurations(t *testing.T) {
 				&plugin.Query{
 					Name:     "GetByID",
 					Cmd:      ":one",
-					Comments: []string{"kind: read", "shard: entity(id)"},
+					Comments: []string{"kind: read", "shard: entity(id)", "store: Entities"},
 					Params:   []*plugin.Parameter{{Number: 1, Column: &plugin.Column{Name: "id", Type: int8Type, NotNull: true}}},
 					Columns:  []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}},
 				},
 				&plugin.Query{
 					Name:     "GetByName",
 					Cmd:      ":one",
-					Comments: []string{"kind: read", "shard: entity(name)"},
+					Comments: []string{"kind: read", "shard: entity(name)", "store: Entities"},
 					Params:   []*plugin.Parameter{{Number: 1, Column: &plugin.Column{Name: "name", Type: textType, NotNull: true}}},
 					Columns:  []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}},
 				},
@@ -814,7 +1018,7 @@ func TestGenerateSupportsAllNodeLevelCommands(t *testing.T) {
 		query := &plugin.Query{
 			Name:     fmt.Sprintf("Query%d", index),
 			Cmd:      test.command,
-			Comments: []string{"kind: read"},
+			Comments: []string{"kind: read", "store: Commands"},
 		}
 		if test.command == ":one" || test.command == ":many" || test.command == ":batchone" || test.command == ":batchmany" {
 			query.Columns = []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}}
@@ -867,7 +1071,7 @@ func TestGenerateQualifiesSqlcTypesForSeparatePackage(t *testing.T) {
 		Queries: []*plugin.Query{{
 			Name:     "GetUser",
 			Cmd:      ":one",
-			Comments: []string{"kind: read", "shard: user(token)"},
+			Comments: []string{"kind: read", "shard: user(token)", "store: Users"},
 			Params: []*plugin.Parameter{
 				{Number: 1, Column: &plugin.Column{Name: "id", Type: int8Type, NotNull: true}},
 				{Number: 2, Column: &plugin.Column{Name: "tenant_id", Type: int8Type, NotNull: true}},
@@ -933,7 +1137,7 @@ func TestGenerateAppliesRenameAndNullableOptions(t *testing.T) {
 		Queries: []*plugin.Query{{
 			Name:     "FindUser",
 			Cmd:      ":one",
-			Comments: []string{"kind: read", "shard: tenant(tenant_id)"},
+			Comments: []string{"kind: read", "shard: tenant(tenant_id)", "store: Users"},
 			Params: []*plugin.Parameter{
 				{Number: 1, Column: &plugin.Column{Name: "tenant_id", Type: int8Type, NotNull: true}},
 				{Number: 2, Column: &plugin.Column{Name: "display_name", Type: textType}},
@@ -955,7 +1159,7 @@ func TestGenerateAppliesRenameAndNullableOptions(t *testing.T) {
 	checks := []string{
 		"FindUser(ctx context.Context, arg *FindUserParams) (*string, error)",
 		"ResolveTenant(accountID int64) SK",
-		"shardKey = q.resolver.ResolveTenant(arg.AccountID)",
+		"shardKey = q.store.resolver.ResolveTenant(arg.AccountID)",
 	}
 	for _, check := range checks {
 		assert.Contains(t, got, check)

@@ -22,16 +22,48 @@ type writeQuerier interface {
 	UpdateUserName(ctx context.Context, arg *UpdateUserNameParams) (*User, error)
 }
 
-// Store is the topology-independent generated query API.
-type Store interface {
-	// CreateUser executes the generated CreateUser query.
-	CreateUser(ctx context.Context, arg *CreateUserParams, storeOptions ...QueryOption) (*User, error)
+// AnalysesReader exposes read queries in the Analyses store group.
+type AnalysesReader interface {
 	// GetAnalysis executes the generated GetAnalysis query.
 	GetAnalysis(ctx context.Context, arg *GetAnalysisParams, storeOptions ...QueryOption) (*Analysis, error)
+}
+
+// AnalysesWriter exposes write queries in the Analyses store group.
+type AnalysesWriter interface {
+}
+
+// Analyses exposes all queries in its generated store group.
+type Analyses interface {
+	AnalysesReader
+	AnalysesWriter
+}
+
+// UsersReader exposes read queries in the Users store group.
+type UsersReader interface {
 	// GetUser executes the generated GetUser query.
 	GetUser(ctx context.Context, arg *GetUserParams, storeOptions ...QueryOption) (*User, error)
+}
+
+// UsersWriter exposes write queries in the Users store group.
+type UsersWriter interface {
+	// CreateUser executes the generated CreateUser query.
+	CreateUser(ctx context.Context, arg *CreateUserParams, storeOptions ...QueryOption) (*User, error)
 	// UpdateUserName executes the generated UpdateUserName query.
 	UpdateUserName(ctx context.Context, arg *UpdateUserNameParams, storeOptions ...QueryOption) (*User, error)
+}
+
+// Users exposes all queries in its generated store group.
+type Users interface {
+	UsersReader
+	UsersWriter
+}
+
+// Store is the topology-independent generated query API.
+type Store interface {
+	// Analyses returns the Analyses query group.
+	Analyses() Analyses
+	// Users returns the Users query group.
+	Users() Users
 }
 
 var _ readQuerier = (*readQueries)(nil)

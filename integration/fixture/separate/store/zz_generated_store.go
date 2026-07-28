@@ -184,6 +184,23 @@ type meshStore[SK any] struct {
 
 var _ Store = (*meshStore[uint8])(nil)
 
+type groupedMeshStore[SK any] struct {
+	store *meshStore[SK]
+}
+
+var _ Analyses = (*groupedMeshStore[uint8])(nil)
+var _ Users = (*groupedMeshStore[uint8])(nil)
+
+// Analyses returns the Analyses query group.
+func (q *meshStore[SK]) Analyses() Analyses {
+	return &groupedMeshStore[SK]{store: q}
+}
+
+// Users returns the Users query group.
+func (q *meshStore[SK]) Users() Users {
+	return &groupedMeshStore[SK]{store: q}
+}
+
 func (c singletonTopology) buildStore(_ context.Context, options storeOptions) (Store, error) {
 	if c.err != nil {
 		return nil, c.err
@@ -230,17 +247,17 @@ func (c singletonTopology) buildStore(_ context.Context, options storeOptions) (
 }
 
 // CreateUser executes the generated query on its target shard.
-func (q *meshStore[SK]) CreateUser(ctx context.Context, arg *db.CreateUserParams, storeOptions ...QueryOption) (result *db.User, err error) {
+func (q *groupedMeshStore[SK]) CreateUser(ctx context.Context, arg *db.CreateUserParams, storeOptions ...QueryOption) (result *db.User, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.mesh.StartSpan(ctx, "Store", "CreateUser", pgmesh.QueryKindWrite)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "CreateUser", pgmesh.QueryKindWrite)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
 	var shardKey SK
-	if q.resolver != nil {
-		shardKey = q.resolver.Tenant(arg.TenantID)
+	if q.store.resolver != nil {
+		shardKey = q.store.resolver.Tenant(arg.TenantID)
 	}
-	shard, err := q.mesh.Shard(shardKey)
+	shard, err := q.store.mesh.Shard(shardKey)
 	if err != nil {
 		return result, err
 	}
@@ -264,17 +281,17 @@ func (q *meshStore[SK]) CreateUser(ctx context.Context, arg *db.CreateUserParams
 }
 
 // GetAnalysis executes the generated query on its target shard.
-func (q *meshStore[SK]) GetAnalysis(ctx context.Context, arg *db.GetAnalysisParams, storeOptions ...QueryOption) (result *db.Analysis, err error) {
+func (q *groupedMeshStore[SK]) GetAnalysis(ctx context.Context, arg *db.GetAnalysisParams, storeOptions ...QueryOption) (result *db.Analysis, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.mesh.StartSpan(ctx, "Store", "GetAnalysis", pgmesh.QueryKindRead)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "GetAnalysis", pgmesh.QueryKindRead)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
 	var shardKey SK
-	if q.resolver != nil {
-		shardKey = q.resolver.Tenant(arg.TenantID)
+	if q.store.resolver != nil {
+		shardKey = q.store.resolver.Tenant(arg.TenantID)
 	}
-	shard, err := q.mesh.Shard(shardKey)
+	shard, err := q.store.mesh.Shard(shardKey)
 	if err != nil {
 		return result, err
 	}
@@ -300,17 +317,17 @@ func (q *meshStore[SK]) GetAnalysis(ctx context.Context, arg *db.GetAnalysisPara
 }
 
 // GetUser executes the generated query on its target shard.
-func (q *meshStore[SK]) GetUser(ctx context.Context, arg *db.GetUserParams, storeOptions ...QueryOption) (result *db.User, err error) {
+func (q *groupedMeshStore[SK]) GetUser(ctx context.Context, arg *db.GetUserParams, storeOptions ...QueryOption) (result *db.User, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.mesh.StartSpan(ctx, "Store", "GetUser", pgmesh.QueryKindRead)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "GetUser", pgmesh.QueryKindRead)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
 	var shardKey SK
-	if q.resolver != nil {
-		shardKey = q.resolver.Tenant(arg.TenantID)
+	if q.store.resolver != nil {
+		shardKey = q.store.resolver.Tenant(arg.TenantID)
 	}
-	shard, err := q.mesh.Shard(shardKey)
+	shard, err := q.store.mesh.Shard(shardKey)
 	if err != nil {
 		return result, err
 	}
@@ -336,17 +353,17 @@ func (q *meshStore[SK]) GetUser(ctx context.Context, arg *db.GetUserParams, stor
 }
 
 // UpdateUserName executes the generated query on its target shard.
-func (q *meshStore[SK]) UpdateUserName(ctx context.Context, arg *db.UpdateUserNameParams, storeOptions ...QueryOption) (result *db.User, err error) {
+func (q *groupedMeshStore[SK]) UpdateUserName(ctx context.Context, arg *db.UpdateUserNameParams, storeOptions ...QueryOption) (result *db.User, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.mesh.StartSpan(ctx, "Store", "UpdateUserName", pgmesh.QueryKindWrite)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "UpdateUserName", pgmesh.QueryKindWrite)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
 	var shardKey SK
-	if q.resolver != nil {
-		shardKey = q.resolver.Tenant(arg.TenantID)
+	if q.store.resolver != nil {
+		shardKey = q.store.resolver.Tenant(arg.TenantID)
 	}
-	shard, err := q.mesh.Shard(shardKey)
+	shard, err := q.store.mesh.Shard(shardKey)
 	if err != nil {
 		return result, err
 	}

@@ -20,6 +20,7 @@ topology.
 pgmesh is a sqlc process plugin plus a small Go runtime. Together they provide:
 
 - separate read, write, and primary-capable query APIs;
+- mandatory query groups for keeping large generated stores navigable;
 - replica reads with explicit primary reads when consistency requires them;
 - logical-key routing through virtual shards to physical databases;
 - shard-pinned transactions;
@@ -39,18 +40,20 @@ go get github.com/clnv/pgmesh
 go install github.com/clnv/pgmesh/cmd/sqlc-gen-store@latest
 ```
 
-Classify each sqlc query. Add a shard route only when the query should be
-routed automatically:
+Classify and group each sqlc query. Add a shard route only when the query
+should be routed automatically:
 
 ```sql
 -- name: GetAccount :one
 -- kind: read
 -- shard: tenant(tenant_id)
+-- store: Accounts
 SELECT * FROM accounts WHERE tenant_id = $1 AND id = $2;
 
 -- name: UpsertAccount :one
 -- kind: write
 -- shard: tenant(tenant_id)
+-- store: Accounts
 INSERT INTO accounts (id, tenant_id, display_name) VALUES ($1, $2, $3)
 ON CONFLICT (id) DO UPDATE SET display_name = EXCLUDED.display_name
 RETURNING *;
@@ -67,7 +70,7 @@ Construct the generated `Store` with a singleton topology:
 
 ```go
 queries, err := db.NewStore(ctx, db.Singleton(pool))
-account, err := queries.GetAccount(ctx, &db.GetAccountParams{
+account, err := queries.Accounts().GetAccount(ctx, &db.GetAccountParams{
     TenantID: tenantID,
     ID:       accountID,
 })

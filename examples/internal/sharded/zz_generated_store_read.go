@@ -21,6 +21,16 @@ func (q *readQueries) WithTx(tx pgx.Tx) *readQueries {
 	return newReadQueries(q.main.WithTx(tx))
 }
 
+// CountAccounts executes the generated CountAccounts query.
+func (q *readQueries) CountAccounts(ctx context.Context, tenantID int64) (int64, error) {
+	rv0, err := q.main.CountAccounts(ctx, tenantID)
+	if err != nil {
+		var zero0 int64
+		return zero0, err
+	}
+	return rv0, nil
+}
+
 // GetAccount executes the generated GetAccount query.
 func (q *readQueries) GetAccount(ctx context.Context, arg *GetAccountParams) (*Account, error) {
 	rv0, err := q.main.GetAccount(ctx, arg)

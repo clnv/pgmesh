@@ -18,12 +18,28 @@ type writeQuerier interface {
 	UpsertSetting(ctx context.Context, arg *UpsertSettingParams) (*ApplicationSetting, error)
 }
 
-// Store is the topology-independent generated query API.
-type Store interface {
+// SettingsReader exposes read queries in the Settings store group.
+type SettingsReader interface {
 	// GetSetting executes the generated GetSetting query.
 	GetSetting(ctx context.Context, key string, storeOptions ...QueryOption) (*ApplicationSetting, error)
+}
+
+// SettingsWriter exposes write queries in the Settings store group.
+type SettingsWriter interface {
 	// UpsertSetting executes the generated UpsertSetting query.
 	UpsertSetting(ctx context.Context, arg *UpsertSettingParams, storeOptions ...QueryOption) (*ApplicationSetting, error)
+}
+
+// Settings exposes all queries in its generated store group.
+type Settings interface {
+	SettingsReader
+	SettingsWriter
+}
+
+// Store is the topology-independent generated query API.
+type Store interface {
+	// Settings returns the Settings query group.
+	Settings() Settings
 }
 
 var _ readQuerier = (*readQueries)(nil)

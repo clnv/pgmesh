@@ -21,15 +21,21 @@ topology.
 ## How pgmesh divides the work
 
 Annotated SQL is processed by both sqlc and the pgmesh process plugin. sqlc
-continues to generate models and database methods. pgmesh generates one public
-`Store` interface over those methods. Application query code always depends on
-that interface:
+continues to generate models and database methods. pgmesh generates a public
+root `Store` plus the required query-group interfaces. Application query code
+starts from that root:
 
 ```go
 func loadAccount(ctx context.Context, store db.Store, arg *db.GetAccountParams) (*db.Account, error) {
-    return store.GetAccount(ctx, arg)
+    return store.Accounts().GetAccount(ctx, arg)
 }
 ```
+
+Every query has a `store: Accounts`-style annotation that groups related
+methods behind `store.Accounts()`. The generator also
+emits `AccountsReader`, `AccountsWriter`, and combined `Accounts` interfaces, so
+packages can depend on the narrow capability they use without splitting one
+database into artificial generated packages.
 
 `NewStore(ctx, topology, options...)` chooses the internal implementation.
 `Singleton` accepts one primary plus functional options for read replicas and
@@ -62,10 +68,10 @@ Go types, and deployment topology in application configuration.
 
 ## Why generated wrappers
 
-The distinction between a reader and a writer is useful inside generated code.
-A replica is represented by a read-only executor, so a generated write cannot
-be sent to it. These capability types remain private because application code
-only needs the topology-independent `Store`.
+The distinction between a reader and a writer is useful at both layers. A
+replica is represented by a private read-only executor, so a generated write
+cannot be sent to it. Each public group also has `Reader` and `Writer`
+interfaces, letting application packages request only the operations they use.
 
 Generation also lets routed method signatures remain aligned with sqlc options
 such as parameter structs, pointers, renames, overrides, and result shapes.

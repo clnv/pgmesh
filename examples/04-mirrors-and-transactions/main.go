@@ -61,13 +61,14 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	accounts := store.Accounts()
 
 	const tenantID int64 = 42
 	const accountID int64 = 4001
-	if dualWriteErr := dualWriteToFutureShard(ctx, store, tenantID, accountID); dualWriteErr != nil {
+	if dualWriteErr := dualWriteToFutureShard(ctx, accounts, tenantID, accountID); dualWriteErr != nil {
 		return dualWriteErr
 	}
-	updated, err := updateInTransaction(ctx, cfg, pools, store, tenantID, accountID)
+	updated, err := updateInTransaction(ctx, cfg, pools, accounts, tenantID, accountID)
 	if err != nil {
 		return err
 	}
@@ -182,11 +183,11 @@ func createStore(
 
 func dualWriteToFutureShard(
 	ctx context.Context,
-	queries sharded.Store,
+	accounts sharded.AccountsWriter,
 	tenantID int64,
 	accountID int64,
 ) error {
-	_, err := queries.UpsertAccount(ctx, &sharded.UpsertAccountParams{
+	_, err := accounts.UpsertAccount(ctx, &sharded.UpsertAccountParams{
 		ID:          accountID,
 		TenantID:    tenantID,
 		DisplayName: "mirrored write",
@@ -201,7 +202,7 @@ func updateInTransaction(
 	ctx context.Context,
 	cfg config,
 	pools *poolRegistry,
-	queries sharded.Store,
+	accounts sharded.AccountsWriter,
 	tenantID int64,
 	accountID int64,
 ) (*sharded.Account, error) {
@@ -230,7 +231,7 @@ func updateInTransaction(
 		}
 	}()
 
-	updated, err := queries.UpdateAccountName(
+	updated, err := accounts.UpdateAccountName(
 		ctx,
 		&sharded.UpdateAccountNameParams{
 			TenantID:    tenantID,

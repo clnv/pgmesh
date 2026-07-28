@@ -16,6 +16,7 @@ WHERE key = $1
 `
 
 // kind: read
+// store: Settings
 func (q *Queries) GetSetting(ctx context.Context, key string) (*ApplicationSetting, error) {
 	row := q.db.QueryRow(ctx, getSetting, key)
 	var i ApplicationSetting
@@ -37,6 +38,7 @@ type UpsertSettingParams struct {
 }
 
 // kind: write
+// store: Settings
 func (q *Queries) UpsertSetting(ctx context.Context, arg *UpsertSettingParams) (*ApplicationSetting, error) {
 	row := q.db.QueryRow(ctx, upsertSetting, arg.Key, arg.Value)
 	var i ApplicationSetting

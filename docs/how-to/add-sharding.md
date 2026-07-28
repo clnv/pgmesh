@@ -99,7 +99,7 @@ read/write-separated configuration. Normal reads use a replica when one is
 configured. Writes use the selected physical shard's primary:
 
 ```go
-account, err := queries.UpsertAccount(ctx, &db.UpsertAccountParams{
+account, err := queries.Accounts().UpsertAccount(ctx, &db.UpsertAccountParams{
     ID:          accountID,
     TenantID:    tenantID,
     DisplayName: "Ada",
@@ -109,7 +109,7 @@ account, err := queries.UpsertAccount(ctx, &db.UpsertAccountParams{
 Force a routed read to the primary when current data is required:
 
 ```go
-account, err := queries.GetAccount(
+account, err := queries.Accounts().GetAccount(
     ctx,
     &db.GetAccountParams{TenantID: tenantID, ID: accountID},
     db.ReadFromPrimary(),

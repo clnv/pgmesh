@@ -182,6 +182,17 @@ type meshStore[SK any] struct {
 
 var _ Store = (*meshStore[uint8])(nil)
 
+type groupedMeshStore[SK any] struct {
+	store *meshStore[SK]
+}
+
+var _ Settings = (*groupedMeshStore[uint8])(nil)
+
+// Settings returns the Settings query group.
+func (q *meshStore[SK]) Settings() Settings {
+	return &groupedMeshStore[SK]{store: q}
+}
+
 func (c singletonTopology) buildStore(_ context.Context, options storeOptions) (Store, error) {
 	if c.err != nil {
 		return nil, c.err
@@ -228,14 +239,14 @@ func (c singletonTopology) buildStore(_ context.Context, options storeOptions) (
 }
 
 // GetSetting executes the generated query on its target shard.
-func (q *meshStore[SK]) GetSetting(ctx context.Context, key string, storeOptions ...QueryOption) (result *ApplicationSetting, err error) {
+func (q *groupedMeshStore[SK]) GetSetting(ctx context.Context, key string, storeOptions ...QueryOption) (result *ApplicationSetting, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.mesh.StartSpan(ctx, "Store", "GetSetting", pgmesh.QueryKindRead)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "GetSetting", pgmesh.QueryKindRead)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
 	var shardKey SK
-	shard, err := q.mesh.Shard(shardKey)
+	shard, err := q.store.mesh.Shard(shardKey)
 	if err != nil {
 		return result, err
 	}
@@ -261,14 +272,14 @@ func (q *meshStore[SK]) GetSetting(ctx context.Context, key string, storeOptions
 }
 
 // UpsertSetting executes the generated query on its target shard.
-func (q *meshStore[SK]) UpsertSetting(ctx context.Context, arg *UpsertSettingParams, storeOptions ...QueryOption) (result *ApplicationSetting, err error) {
+func (q *groupedMeshStore[SK]) UpsertSetting(ctx context.Context, arg *UpsertSettingParams, storeOptions ...QueryOption) (result *ApplicationSetting, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.mesh.StartSpan(ctx, "Store", "UpsertSetting", pgmesh.QueryKindWrite)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "UpsertSetting", pgmesh.QueryKindWrite)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
 	var shardKey SK
-	shard, err := q.mesh.Shard(shardKey)
+	shard, err := q.store.mesh.Shard(shardKey)
 	if err != nil {
 		return result, err
 	}

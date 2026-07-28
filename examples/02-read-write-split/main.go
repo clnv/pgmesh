@@ -33,14 +33,15 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	account, err := writeAccount(ctx, store)
+	accounts := store.Accounts()
+	account, err := writeAccount(ctx, accounts)
 	if err != nil {
 		return err
 	}
-	if err := printPrimaryRead(ctx, store, account); err != nil {
+	if err := printPrimaryRead(ctx, accounts, account); err != nil {
 		return err
 	}
-	return printReplicaRead(ctx, store, account)
+	return printReplicaRead(ctx, accounts, account)
 }
 
 func openDatabasePools(ctx context.Context) (*databasePools, error) {
@@ -74,9 +75,9 @@ func newAccountsStore(ctx context.Context, pools *databasePools) (sharded.Store,
 
 func writeAccount(
 	ctx context.Context,
-	store sharded.Store,
+	accounts sharded.AccountsWriter,
 ) (*sharded.Account, error) {
-	account, err := store.UpsertAccount(ctx, &sharded.UpsertAccountParams{
+	account, err := accounts.UpsertAccount(ctx, &sharded.UpsertAccountParams{
 		ID:          2001,
 		TenantID:    42,
 		DisplayName: "primary write",
@@ -89,10 +90,10 @@ func writeAccount(
 
 func printPrimaryRead(
 	ctx context.Context,
-	store sharded.Store,
+	accounts sharded.AccountsReader,
 	account *sharded.Account,
 ) error {
-	strong, err := store.GetAccount(ctx, accountKey(account), sharded.ReadFromPrimary())
+	strong, err := accounts.GetAccount(ctx, accountKey(account), sharded.ReadFromPrimary())
 	if err != nil {
 		return fmt.Errorf("read primary: %w", err)
 	}
@@ -102,10 +103,10 @@ func printPrimaryRead(
 
 func printReplicaRead(
 	ctx context.Context,
-	store sharded.Store,
+	accounts sharded.AccountsReader,
 	account *sharded.Account,
 ) error {
-	replicaCopy, err := store.GetAccount(ctx, accountKey(account))
+	replicaCopy, err := accounts.GetAccount(ctx, accountKey(account))
 	if err != nil {
 		return fmt.Errorf("read replica (check replication and lag): %w", err)
 	}

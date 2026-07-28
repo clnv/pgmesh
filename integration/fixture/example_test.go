@@ -29,13 +29,14 @@ func ExampleStore() {
 	}
 
 	ctx := context.Background()
-	if _, err := queries.GetUser(ctx, &GetUserParams{TenantID: 10, ID: 20}); err != nil {
+	users := queries.Users()
+	if _, err := users.GetUser(ctx, &GetUserParams{TenantID: 10, ID: 20}); err != nil {
 		panic(err)
 	}
-	if _, err := queries.GetUser(ctx, &GetUserParams{TenantID: 10, ID: 20}, ReadFromPrimary()); err != nil {
+	if _, err := users.GetUser(ctx, &GetUserParams{TenantID: 10, ID: 20}, ReadFromPrimary()); err != nil {
 		panic(err)
 	}
-	if _, err := queries.CreateUser(ctx, &CreateUserParams{ID: 20, TenantID: 10, Name: "user"}); err != nil {
+	if _, err := users.CreateUser(ctx, &CreateUserParams{ID: 20, TenantID: 10, Name: "user"}); err != nil {
 		panic(err)
 	}
 

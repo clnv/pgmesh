@@ -29,8 +29,8 @@ store, err := db.NewStore(
 For example:
 
 ```go
-eventual, err := queries.GetAccount(ctx, arg)
-strong, err := queries.GetAccount(ctx, arg, db.ReadFromPrimary())
+eventual, err := queries.Accounts().GetAccount(ctx, arg)
+strong, err := queries.Accounts().GetAccount(ctx, arg, db.ReadFromPrimary())
 ```
 
 ## Consistency considerations

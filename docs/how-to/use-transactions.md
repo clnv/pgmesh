@@ -46,7 +46,7 @@ defer func() {
 ## Pass the generated route option
 
 ```go
-updated, err := queries.UpdateAccountName(
+updated, err := queries.Accounts().UpdateAccountName(
     ctx,
     &db.UpdateAccountNameParams{
         TenantID:    tenantID,

@@ -15,6 +15,10 @@ func generateWrapper(opts *options, queries []generatedQuery, imports *importSet
 	if err != nil {
 		return nil, err
 	}
+	groups, err := collectStoreGroups(queries, opts)
+	if err != nil {
+		return nil, err
+	}
 	if len(routes) > 0 {
 		for _, query := range queries {
 			if query.route == nil {
@@ -51,7 +55,7 @@ func generateWrapper(opts *options, queries []generatedQuery, imports *importSet
 	}
 
 	if err := appendFile(derivedOutputFileName(opts.OutputFileName, "interfaces"), func(out *bytes.Buffer) {
-		writeQueryInterfaces(out, opts, queries)
+		writeQueryInterfaces(out, opts, queries, groups)
 		if len(routes) > 0 {
 			writeShardResolverInterface(out, opts, routes)
 		}
@@ -72,7 +76,7 @@ func generateWrapper(opts *options, queries []generatedQuery, imports *importSet
 		writeQueryOptions(out)
 		writeQueryStore(out, opts)
 		writeNodeConstructor(out, opts)
-		writeStoreConfiguration(out, opts, queries)
+		writeStoreConfiguration(out, opts, queries, groups)
 	}); err != nil {
 		return nil, err
 	}
@@ -124,26 +128,70 @@ func usedImports(imports []importSpec, body string) []importSpec {
 	return used
 }
 
-func writeQueryInterfaces(out *bytes.Buffer, opts *options, queries []generatedQuery) {
+func writeQueryInterfaces(
+	out *bytes.Buffer,
+	opts *options,
+	queries []generatedQuery,
+	groups []storeGroup,
+) {
 	writeSplitInterface(out, defaultReadInterface, queries, queryKindRead)
 	writeSplitInterface(out, defaultWriteInterface, queries, queryKindWrite)
+	for _, group := range groups {
+		writeStoreGroupInterfaces(out, &group)
+	}
 	fmt.Fprintf(out, "// %s is the topology-independent generated query API.\n", opts.StoreInterfaceName)
 	fmt.Fprintf(out, "type %s interface {\n", opts.StoreInterfaceName)
-	for _, query := range queries {
-		fmt.Fprintf(out, "\t// %s executes the generated %s query.\n", query.methodName, query.methodName)
-		fmt.Fprintf(
-			out,
-			"\t%s(%s)%s\n",
-			query.methodName,
-			storeParamsSignature(query.params),
-			resultsSignature(query.results),
-		)
+	for _, group := range groups {
+		fmt.Fprintf(out, "\t// %s returns the %s query group.\n", group.name, group.name)
+		fmt.Fprintf(out, "\t%s() %s\n", group.name, group.name)
 	}
 	out.WriteString("}\n\n")
 
 	fmt.Fprintf(out, "var _ %s = (*%s)(nil)\n", defaultReadInterface, defaultReadType)
 	fmt.Fprintf(out, "var _ %s = (*%s)(nil)\n", defaultWriteInterface, defaultWriteType)
 	fmt.Fprintf(out, "var _ %s = (*%s)(nil)\n\n", targetName(opts, "Querier"), defaultStoreType)
+}
+
+func writeStoreGroupInterfaces(out *bytes.Buffer, group *storeGroup) {
+	reader := storeReaderInterfaceName(group.name)
+	writer := storeWriterInterfaceName(group.name)
+
+	fmt.Fprintf(out, "// %s exposes read queries in the %s store group.\n", reader, group.name)
+	fmt.Fprintf(out, "type %s interface {\n", reader)
+	for index := range group.queries {
+		query := &group.queries[index]
+		if query.kind == queryKindRead {
+			writeStoreInterfaceMethod(out, query)
+		}
+	}
+	out.WriteString("}\n\n")
+
+	fmt.Fprintf(out, "// %s exposes write queries in the %s store group.\n", writer, group.name)
+	fmt.Fprintf(out, "type %s interface {\n", writer)
+	for index := range group.queries {
+		query := &group.queries[index]
+		if query.kind == queryKindWrite {
+			writeStoreInterfaceMethod(out, query)
+		}
+	}
+	out.WriteString("}\n\n")
+
+	fmt.Fprintf(out, "// %s exposes all queries in its generated store group.\n", group.name)
+	fmt.Fprintf(out, "type %s interface {\n", group.name)
+	fmt.Fprintf(out, "\t%s\n", reader)
+	fmt.Fprintf(out, "\t%s\n", writer)
+	out.WriteString("}\n\n")
+}
+
+func writeStoreInterfaceMethod(out *bytes.Buffer, query *generatedQuery) {
+	fmt.Fprintf(out, "\t// %s executes the generated %s query.\n", query.methodName, query.methodName)
+	fmt.Fprintf(
+		out,
+		"\t%s(%s)%s\n",
+		query.methodName,
+		storeParamsSignature(query.params),
+		resultsSignature(query.results),
+	)
 }
 
 func writeReadQueries(out *bytes.Buffer, opts *options, queries []generatedQuery) {
@@ -350,7 +398,12 @@ func hasShardRoutes(queries []generatedQuery) bool {
 	return false
 }
 
-func writeStoreConfiguration(out *bytes.Buffer, opts *options, queries []generatedQuery) {
+func writeStoreConfiguration(
+	out *bytes.Buffer,
+	opts *options,
+	queries []generatedQuery,
+	groups []storeGroup,
+) {
 	out.WriteString("type storeOptions struct {\n")
 	out.WriteString("\ttracerProvider trace.TracerProvider\n")
 	out.WriteString("\tmeterProvider metric.MeterProvider\n")
@@ -453,6 +506,33 @@ func writeStoreConfiguration(out *bytes.Buffer, opts *options, queries []generat
 	}
 	out.WriteString("}\n\n")
 	fmt.Fprintf(out, "var _ %s = (*%s[uint8])(nil)\n\n", opts.StoreInterfaceName, defaultMeshStoreType)
+	if len(groups) > 0 {
+		fmt.Fprintf(out, "type %s[SK any] struct {\n", defaultGroupType)
+		fmt.Fprintf(out, "\tstore *%s[SK]\n", defaultMeshStoreType)
+		out.WriteString("}\n\n")
+		for _, group := range groups {
+			fmt.Fprintf(out, "var _ %s = (*%s[uint8])(nil)\n", group.name, defaultGroupType)
+		}
+		out.WriteString("\n")
+		for _, group := range groups {
+			fmt.Fprintf(out, "// %s returns the %s query group.\n", group.name, group.name)
+			fmt.Fprintf(
+				out,
+				"func (%s *%s[SK]) %s() %s {\n",
+				defaultReceiverName,
+				defaultMeshStoreType,
+				group.name,
+				group.name,
+			)
+			fmt.Fprintf(
+				out,
+				"\treturn &%s[SK]{store: %s}\n",
+				defaultGroupType,
+				defaultReceiverName,
+			)
+			out.WriteString("}\n\n")
+		}
+	}
 
 	fmt.Fprintf(
 		out,
@@ -503,6 +583,8 @@ func writeStoreConfiguration(out *bytes.Buffer, opts *options, queries []generat
 }
 
 func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generatedQuery) {
+	receiverType := defaultGroupType
+	store := defaultReceiverName + ".store"
 	traced := lastResultIsError(query.results)
 	resultSignature := resultsSignature(query.results)
 	var resultNames []string
@@ -520,7 +602,7 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generate
 		out,
 		"func (%s *%s[SK]) %s(%s)%s {\n",
 		defaultReceiverName,
-		defaultMeshStoreType,
+		receiverType,
 		query.methodName,
 		storeParamsSignature(query.params),
 		resultSignature,
@@ -530,7 +612,7 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generate
 		fmt.Fprintf(
 			out,
 			"\tctx, querySpan := %s.mesh.StartSpan(ctx, %q, %q, %s)\n",
-			defaultReceiverName,
+			store,
 			opts.StoreInterfaceName,
 			query.methodName,
 			queryKindConstant(query.kind),
@@ -541,7 +623,7 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generate
 	out.WriteString("\t// Resolve the shard key for this topology.\n")
 	out.WriteString("\tvar shardKey SK\n")
 	if query.route != nil {
-		fmt.Fprintf(out, "\tif %s.resolver != nil {\n", defaultReceiverName)
+		fmt.Fprintf(out, "\tif %s.resolver != nil {\n", store)
 		routeArgs := make([]string, 0, len(query.route.operands))
 		for _, operand := range query.route.operands {
 			routeArgs = append(routeArgs, operand.expression)
@@ -549,19 +631,19 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generate
 		fmt.Fprintf(
 			out,
 			"\t\tshardKey = %s.resolver.%s(%s)\n",
-			defaultReceiverName,
+			store,
 			query.route.methodName,
 			strings.Join(routeArgs, ", "),
 		)
 		out.WriteString("\t}\n")
 	}
 	if traced {
-		fmt.Fprintf(out, "\tshard, %s := %s.mesh.Shard(shardKey)\n", errName, defaultReceiverName)
+		fmt.Fprintf(out, "\tshard, %s := %s.mesh.Shard(shardKey)\n", errName, store)
 		fmt.Fprintf(out, "\tif %s != nil {\n", errName)
 		fmt.Fprintf(out, "\t\treturn %s\n", strings.Join(resultNames, ", "))
 		out.WriteString("\t}\n")
 	} else {
-		fmt.Fprintf(out, "\tshard, _ := %s.mesh.Shard(shardKey)\n", defaultReceiverName)
+		fmt.Fprintf(out, "\tshard, _ := %s.mesh.Shard(shardKey)\n", store)
 	}
 
 	out.WriteString("\n\t// Apply options that can override the default route.\n")

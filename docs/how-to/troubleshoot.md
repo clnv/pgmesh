@@ -5,8 +5,10 @@
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | Missing required kind annotation | The query has no `kind` comment | Add `-- kind: read` or `-- kind: write` immediately after `-- name` |
-| First comment must be kind | Ordinary documentation appears before `kind` | Move documentation after `kind` and optional `shard` |
+| First comment must be kind | Ordinary documentation appears before `kind` | Move documentation after `kind`, optional `shard`, and required `store` |
 | Invalid or misplaced shard annotation | `shard` is malformed or appears later | Use `-- shard: route(operand, ...)` directly after `kind` |
+| Missing required store annotation | The query has no `store` comment | Add `-- store: ExportedGroup` immediately after optional `shard` metadata |
+| Invalid or misplaced store annotation | `store` is unexported, malformed, or appears after documentation | Use `-- store: ExportedGroup` directly after optional `shard` metadata |
 | Unknown shard operand | The route names a result column or nonexistent parameter | Name an input parameter recognized by sqlc |
 | Conflicting route types | The same resolver method is inferred with incompatible operand types | Align the SQL parameter types or use different route names |
 | A sharded store contains an unsharded query | One generated store mixes routing models | Add shard metadata or move the model and queries to another generated package |
@@ -39,7 +41,7 @@ Default routed reads use configured replicas. PostgreSQL replication may not
 have applied the write yet. Retry according to application policy or use:
 
 ```go
-value, err := queries.GetAccount(ctx, arg, db.ReadFromPrimary())
+value, err := queries.Accounts().GetAccount(ctx, arg, db.ReadFromPrimary())
 ```
 
 pgmesh does not monitor replication lag.

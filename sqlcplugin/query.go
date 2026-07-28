@@ -37,6 +37,12 @@ type generatedQuery struct {
 	params     []argument
 	results    []string
 	route      *shardRoute
+	store      string
+}
+
+type storeGroup struct {
+	name    string
+	queries []generatedQuery
 }
 
 type shardRoute struct {
@@ -55,6 +61,13 @@ type routeOperand struct {
 	typ        string
 	expression string
 }
+
+const (
+	shardAnnotationPrefix      = "shard:"
+	storeAnnotationPrefix      = "store:"
+	generatedOptionDeclaration = "generated option constructor"
+	sqlcDeclaration            = "sqlc declaration"
+)
 
 func collectShardRoutes(queries []generatedQuery) ([]shardRoute, error) {
 	byName := make(map[string]shardRoute)
@@ -85,6 +98,79 @@ func collectShardRoutes(queries []generatedQuery) ([]shardRoute, error) {
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].methodName < routes[j].methodName })
 	return routes, nil
+}
+
+func collectStoreGroups(queries []generatedQuery, opts *options) ([]storeGroup, error) {
+	byName := make(map[string][]generatedQuery)
+	for _, query := range queries {
+		if query.store == "" {
+			continue
+		}
+		byName[query.store] = append(byName[query.store], query)
+	}
+
+	groups := make([]storeGroup, 0, len(byName))
+	for name, groupedQueries := range byName {
+		groups = append(groups, storeGroup{name: name, queries: groupedQueries})
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i].name < groups[j].name })
+
+	declarations := map[string]string{
+		opts.ConstructorName:       "constructor",
+		opts.ResolverInterfaceName: "resolver interface",
+		opts.ShardedConstructor:    "sharded constructor",
+		opts.StoreInterfaceName:    "store interface",
+		"QueryOption":              "generated query option",
+		"ReadFromPrimary":          generatedOptionDeclaration,
+		"ShardedOption":            "generated sharded option",
+		"Singleton":                "generated singleton constructor",
+		"SingletonOption":          "generated singleton option",
+		"StoreOption":              "generated store option",
+		"Topology":                 "generated topology",
+		"WithDatabaseName":         generatedOptionDeclaration,
+		"WithLogger":               generatedOptionDeclaration,
+		"WithMeterProvider":        generatedOptionDeclaration,
+		"WithReadReplicas":         generatedOptionDeclaration,
+		"WithReplicaSet":           generatedOptionDeclaration,
+		"WithTracerProvider":       generatedOptionDeclaration,
+		"WithTx":                   generatedOptionDeclaration,
+		"WithVShardMapping":        generatedOptionDeclaration,
+		"WithWriteMirrors":         generatedOptionDeclaration,
+	}
+	if opts.InternalImportPath == "" {
+		declarations["DBTX"] = sqlcDeclaration
+		declarations[defaultTargetNew] = sqlcDeclaration
+		declarations[defaultTargetType] = sqlcDeclaration
+		declarations["Querier"] = sqlcDeclaration
+	}
+
+	for _, group := range groups {
+		for _, declaration := range []string{
+			group.name,
+			storeReaderInterfaceName(group.name),
+			storeWriterInterfaceName(group.name),
+		} {
+			if previous, exists := declarations[declaration]; exists {
+				return nil, fmt.Errorf(
+					"store group %s generates declaration %s that conflicts with %s",
+					group.name,
+					declaration,
+					previous,
+				)
+			}
+			declarations[declaration] = "store group " + group.name
+		}
+	}
+
+	return groups, nil
+}
+
+func storeReaderInterfaceName(group string) string {
+	return group + "Reader"
+}
+
+func storeWriterInterfaceName(group string) string {
+	return group + "Writer"
 }
 
 func sameRouteSignature(left, right shardRoute) bool {
@@ -361,7 +447,7 @@ func buildQueries(
 			resolver.addImportsForType(param.typ)
 		}
 
-		kind, annotation, err := classifyQuery(query)
+		kind, annotation, store, err := classifyQuery(query)
 		if err != nil {
 			return nil, err
 		}
@@ -388,6 +474,7 @@ func buildQueries(
 			params:     params,
 			results:    results,
 			route:      route,
+			store:      store,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -396,42 +483,61 @@ func buildQueries(
 	return out, nil
 }
 
-func classifyQuery(query *plugin.Query) (queryKind, *routeAnnotation, error) {
+func classifyQuery(query *plugin.Query) (queryKind, *routeAnnotation, string, error) {
 	if err := validateRawAnnotationOrder(query); err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 	comments := queryComments(query)
 	if len(comments) == 0 {
-		return "", nil, fmt.Errorf(
+		return "", nil, "", fmt.Errorf(
 			"query %s is missing required kind annotation; add -- kind: read or -- kind: write immediately after -- name",
 			query.GetName(),
 		)
 	}
 	kind, err := queryKindFromComment(query.GetName(), comments[0])
 	if err != nil {
-		return "", nil, err
+		return "", nil, "", err
 	}
 
 	var route *routeAnnotation
-	if len(comments) > 1 && strings.HasPrefix(strings.ToLower(normalizeComment(comments[1])), "shard:") {
-		route, err = parseShardAnnotation(query.GetName(), comments[1])
+	next := 1
+	if len(comments) > next && annotationPrefix(comments[next]) == shardAnnotationPrefix {
+		route, err = parseShardAnnotation(query.GetName(), comments[next])
 		if err != nil {
-			return "", nil, err
+			return "", nil, "", err
 		}
+		next++
 	}
-	start := 1
-	if route != nil {
-		start = 2
+
+	var store string
+	if len(comments) > next && annotationPrefix(comments[next]) == storeAnnotationPrefix {
+		store, err = parseStoreAnnotation(query.GetName(), comments[next])
+		if err != nil {
+			return "", nil, "", err
+		}
+		next++
 	}
-	for _, comment := range comments[start:] {
-		if strings.HasPrefix(strings.ToLower(normalizeComment(comment)), "shard:") {
-			return "", nil, fmt.Errorf(
+	for _, comment := range comments[next:] {
+		switch annotationPrefix(comment) {
+		case shardAnnotationPrefix:
+			return "", nil, "", fmt.Errorf(
 				"query %s shard annotation must immediately follow its kind annotation",
+				query.GetName(),
+			)
+		case storeAnnotationPrefix:
+			return "", nil, "", fmt.Errorf(
+				"query %s store annotation must immediately follow its kind or shard annotation",
 				query.GetName(),
 			)
 		}
 	}
-	return kind, route, nil
+	if store == "" {
+		return "", nil, "", fmt.Errorf(
+			"query %s is missing required store annotation; add -- store: ExportedGroup immediately after its optional shard annotation",
+			query.GetName(),
+		)
+	}
+	return kind, route, store, nil
 }
 
 func validateRawAnnotationOrder(query *plugin.Query) error {
@@ -455,19 +561,42 @@ func validateRawAnnotationOrder(query *plugin.Query) error {
 			query.GetName(),
 		)
 	}
-	for index := nameLine + 2; index < len(lines); index++ {
-		if !strings.HasPrefix(strings.ToLower(normalizeComment(lines[index])), "shard:") {
-			continue
-		}
-		if index != nameLine+2 || !strings.HasPrefix(strings.TrimSpace(lines[index]), "--") {
+	next := nameLine + 2
+	if next < len(lines) && annotationPrefix(lines[next]) == shardAnnotationPrefix &&
+		strings.HasPrefix(strings.TrimSpace(lines[next]), "--") {
+		next++
+	}
+	if next < len(lines) && annotationPrefix(lines[next]) == storeAnnotationPrefix &&
+		strings.HasPrefix(strings.TrimSpace(lines[next]), "--") {
+		next++
+	}
+	for index := next; index < len(lines); index++ {
+		switch annotationPrefix(lines[index]) {
+		case shardAnnotationPrefix:
 			return fmt.Errorf(
 				"query %s shard annotation must immediately follow its kind annotation",
 				query.GetName(),
 			)
+		case storeAnnotationPrefix:
+			return fmt.Errorf(
+				"query %s store annotation must immediately follow its kind or shard annotation",
+				query.GetName(),
+			)
 		}
-		break
 	}
 	return nil
+}
+
+func annotationPrefix(comment string) string {
+	lower := strings.ToLower(normalizeComment(comment))
+	switch {
+	case strings.HasPrefix(lower, shardAnnotationPrefix):
+		return shardAnnotationPrefix
+	case strings.HasPrefix(lower, storeAnnotationPrefix):
+		return storeAnnotationPrefix
+	default:
+		return ""
+	}
 }
 
 func queryComments(query *plugin.Query) []string {
@@ -522,6 +651,20 @@ func parseShardAnnotation(queryName, comment string) (*routeAnnotation, error) {
 		operands = append(operands, operand)
 	}
 	return &routeAnnotation{name: name, operands: operands}, nil
+}
+
+func parseStoreAnnotation(queryName, comment string) (string, error) {
+	normalized := normalizeComment(comment)
+	value := strings.TrimSpace(normalized[len(storeAnnotationPrefix):])
+	first, _ := utf8.DecodeRuneInString(value)
+	if !validRouteIdentifier(value) || goKeywords[value] || !unicode.IsUpper(first) {
+		return "", fmt.Errorf(
+			"query %s has invalid store annotation %q; expected an exported Go identifier",
+			queryName,
+			value,
+		)
+	}
+	return value, nil
 }
 
 func validRouteIdentifier(value string) bool {

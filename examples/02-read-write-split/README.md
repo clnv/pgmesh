@@ -3,7 +3,8 @@
 The generated `Store` is constructed with one primary and one replica.
 Ordinary reads are balanced across replicas, writes use the primary, and
 `ReadFromPrimary()` requests a strong read. Those routing details do not
-change the query interface used by the application.
+change the generated `AccountsReader` and `AccountsWriter` interfaces used by
+the application.
 
 ```bash
 RW_PRIMARY_DSN='postgres://user:pass@primary/accounts?sslmode=disable' \

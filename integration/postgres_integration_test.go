@@ -217,17 +217,17 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 				h.insert(t, "shard0-replica1", 100, 2, "replica1")
 				h.insert(t, "shard1-primary", 101, 3, "shard1-primary")
 
-				first, err := h.queries.GetUser(t.Context(), &fixture.GetUserParams{TenantID: 2, ID: 100})
+				first, err := h.queries.Users().GetUser(t.Context(), &fixture.GetUserParams{TenantID: 2, ID: 100})
 				require.NoError(t, err)
-				second, err := h.queries.GetUser(t.Context(), &fixture.GetUserParams{TenantID: 2, ID: 100})
+				second, err := h.queries.Users().GetUser(t.Context(), &fixture.GetUserParams{TenantID: 2, ID: 100})
 				require.NoError(t, err)
-				strong, err := h.queries.GetUser(
+				strong, err := h.queries.Users().GetUser(
 					t.Context(),
 					&fixture.GetUserParams{TenantID: 2, ID: 100},
 					fixture.ReadFromPrimary(),
 				)
 				require.NoError(t, err)
-				fallback, err := h.queries.GetUser(t.Context(), &fixture.GetUserParams{TenantID: 3, ID: 101})
+				fallback, err := h.queries.Users().GetUser(t.Context(), &fixture.GetUserParams{TenantID: 3, ID: 101})
 				require.NoError(t, err)
 
 				assert.Equal(t, "replica0", first.Name)
@@ -239,9 +239,9 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 		{
 			name: "writes route by virtual shard and mirror only shard zero",
 			run: func(t *testing.T, h *postgresHarness) {
-				_, err := h.queries.CreateUser(t.Context(), &fixture.CreateUserParams{ID: 200, TenantID: 2, Name: "even"})
+				_, err := h.queries.Users().CreateUser(t.Context(), &fixture.CreateUserParams{ID: 200, TenantID: 2, Name: "even"})
 				require.NoError(t, err)
-				_, err = h.queries.CreateUser(t.Context(), &fixture.CreateUserParams{ID: 201, TenantID: 3, Name: "odd"})
+				_, err = h.queries.Users().CreateUser(t.Context(), &fixture.CreateUserParams{ID: 201, TenantID: 3, Name: "odd"})
 				require.NoError(t, err)
 
 				assert.Equal(t, "even", h.userName(t, "shard0-primary", 200, 2))
@@ -258,7 +258,7 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 			run: func(t *testing.T, h *postgresHarness) {
 				h.insert(t, "shard0-mirror", 300, 2, "existing")
 
-				user, err := h.queries.CreateUser(
+				user, err := h.queries.Users().CreateUser(
 					t.Context(),
 					&fixture.CreateUserParams{ID: 300, TenantID: 2, Name: "primary-result"},
 				)
@@ -277,7 +277,7 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 			run: func(t *testing.T, h *postgresHarness) {
 				h.insert(t, "shard0-primary", 350, 2, "before")
 
-				user, err := h.queries.UpdateUserName(
+				user, err := h.queries.Users().UpdateUserName(
 					t.Context(),
 					&fixture.UpdateUserNameParams{TenantID: 2, ID: 350, Name: "after"},
 				)
@@ -301,7 +301,7 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 				)
 				require.NoError(t, err)
 
-				populated, err := h.queries.GetAnalysis(
+				populated, err := h.queries.Analyses().GetAnalysis(
 					t.Context(),
 					&fixture.GetAnalysisParams{TenantID: 2, ID: 360},
 					fixture.ReadFromPrimary(),
@@ -316,7 +316,7 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 				assert.Equal(t, "2026-01-02T03:04:05Z", populated.ActiveWindow.Lower.Time.UTC().Format(time.RFC3339))
 				assert.Equal(t, "2026-01-03T03:04:05Z", populated.ActiveWindow.Upper.Time.UTC().Format(time.RFC3339))
 
-				nullable, err := h.queries.GetAnalysis(
+				nullable, err := h.queries.Analyses().GetAnalysis(
 					t.Context(),
 					&fixture.GetAnalysisParams{TenantID: 2, ID: 361},
 					fixture.ReadFromPrimary(),
@@ -335,14 +335,14 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 				require.NoError(t, err)
 				defer func() { _ = tx.Rollback(context.Background()) }()
 
-				created, err := h.queries.CreateUser(
+				created, err := h.queries.Users().CreateUser(
 					t.Context(),
 					&fixture.CreateUserParams{ID: 400, TenantID: 2, Name: "transactional"},
 					fixture.WithTx(tx),
 				)
 				require.NoError(t, err)
 				assert.Equal(t, "transactional", created.Name)
-				inside, err := h.queries.GetUser(
+				inside, err := h.queries.Users().GetUser(
 					t.Context(),
 					&fixture.GetUserParams{ID: 400, TenantID: 2},
 					fixture.WithTx(tx),

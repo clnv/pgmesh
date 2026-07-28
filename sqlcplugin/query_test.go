@@ -48,6 +48,37 @@ func TestParseShardAnnotation(t *testing.T) {
 	}
 }
 
+func TestParseStoreAnnotation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		comment string
+		want    string
+		wantErr string
+	}{
+		{name: "exported identifier", comment: "store: Accounts", want: "Accounts"},
+		{name: "acronym", comment: "store: IAM", want: "IAM"},
+		{name: "empty", comment: "store:", wantErr: "expected an exported Go identifier"},
+		{name: "unexported", comment: "store: accounts", wantErr: "expected an exported Go identifier"},
+		{name: "punctuation", comment: "store: User-Accounts", wantErr: "expected an exported Go identifier"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := parseStoreAnnotation("GetUser", test.comment)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, test.want, got)
+		})
+	}
+}
+
 func TestQueryReturnsData(t *testing.T) {
 	t.Parallel()
 
