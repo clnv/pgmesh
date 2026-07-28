@@ -16,6 +16,7 @@ const (
 	defaultErrorsPackage  = "errors"
 	defaultFMT            = "fmt"
 	defaultContext        = "context"
+	defaultSync           = "sync"
 	defaultMetricAlias    = "metric"
 	defaultRuntimeAlias   = "pgmesh"
 	defaultPGXAlias       = "pgx"
@@ -47,6 +48,9 @@ const (
 	mirrorReceiverName    = "mirror"
 	mirrorErrorName       = "mirrorErr"
 	resultErrorName       = "error"
+	cmdMany               = ":many"
+	cmdExec               = ":exec"
+	cmdExecRows           = ":execrows"
 	cmdCopyFrom           = ":copyfrom"
 	emptyInterfaceType    = "interface{}"
 )

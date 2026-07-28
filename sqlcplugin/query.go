@@ -41,6 +41,7 @@ func querySpecs(req *plugin.GenerateRequest, opts *options) ([]generatedQuery, *
 
 type generatedQuery struct {
 	methodName  string
+	command     string
 	kind        queryKind
 	arg         queryValue
 	ret         queryValue
@@ -49,6 +50,7 @@ type generatedQuery struct {
 	callArgs    []string
 	results     []string
 	route       *shardRoute
+	shardMode   shardMode
 	store       string
 	shardArgs   *shardArgWrapper
 }
@@ -84,9 +86,19 @@ type shardArgWrapper struct {
 	sqlcArg queryValue
 }
 
+type shardMode uint8
+
+const (
+	shardModeNone shardMode = iota
+	shardModeRouted
+	shardModeAll
+	shardModeGroupedCopy
+)
+
 const (
 	shardAnnotationPrefix = "shard:"
 	storeAnnotationPrefix = "store:"
+	allShardsRouteName    = "all"
 )
 
 func collectShardRoutes(queries []generatedQuery) ([]shardRoute, error) {
@@ -467,31 +479,55 @@ func buildQueries(
 			return nil, err
 		}
 		var route *shardRoute
+		shardMode := shardModeNone
 		if annotation != nil {
-			if query.GetCmd() == cmdCopyFrom || strings.HasPrefix(query.GetCmd(), ":batch") {
+			switch {
+			case annotation.name == allShardsRouteName:
+				if len(annotation.operands) != 0 {
+					return nil, fmt.Errorf(
+						"query %s shard route %q cannot declare operands",
+						query.GetName(), allShardsRouteName,
+					)
+				}
+				switch query.GetCmd() {
+				case cmdMany, cmdExec, cmdExecRows:
+					shardMode = shardModeAll
+				default:
+					return nil, fmt.Errorf(
+						"query %s uses shard: all() with unsupported command %s; expected :many, :exec, or :execrows",
+						query.GetName(), query.GetCmd(),
+					)
+				}
+			case strings.HasPrefix(query.GetCmd(), ":batch"):
 				return nil, fmt.Errorf(
-					"query %s uses %s and cannot declare shard metadata; partition the batch and use node-level wrappers",
+					"query %s uses %s and cannot declare shard metadata; grouped routing is supported only for :copyfrom",
 					query.GetName(), query.GetCmd(),
 				)
-			}
-			route, err = resolveShardRoute(
-				query,
-				arg,
-				annotation,
-				opts,
-				structs,
-				req.GetCatalog().GetDefaultSchema(),
-			)
-			if err != nil {
-				return nil, err
-			}
-			if !lastResultIsError(results) {
-				return nil, fmt.Errorf("query %s cannot be shard-routed because its generated result has no error", query.GetName())
+			default:
+				shardMode = shardModeRouted
+				if query.GetCmd() == cmdCopyFrom {
+					shardMode = shardModeGroupedCopy
+				}
+				route, err = resolveShardRoute(
+					query,
+					arg,
+					annotation,
+					opts,
+					structs,
+					req.GetCatalog().GetDefaultSchema(),
+				)
+				if err != nil {
+					return nil, err
+				}
+				if !lastResultIsError(results) {
+					return nil, fmt.Errorf("query %s cannot be shard-routed because its generated result has no error", query.GetName())
+				}
 			}
 		}
 
 		out = append(out, generatedQuery{
 			methodName:  query.GetName(),
+			command:     query.GetCmd(),
 			kind:        kind,
 			arg:         arg,
 			ret:         ret,
@@ -500,6 +536,7 @@ func buildQueries(
 			callArgs:    argumentNames(params),
 			results:     results,
 			route:       route,
+			shardMode:   shardMode,
 			store:       store,
 			shardArgs:   nil,
 		})
@@ -1100,6 +1137,9 @@ func wrapExternalShardOperands(query *generatedQuery, opts *options) error {
 	if opts.EmitParamsStructPointers {
 		wrapperType = "*" + wrapperType
 	}
+	if query.shardMode == shardModeGroupedCopy {
+		wrapperType = "[]" + wrapperType
+	}
 	query.storeParams = []argument{
 		query.params[0],
 		{name: "arg", typ: wrapperType},
@@ -1189,7 +1229,7 @@ func buildQueryReturn(
 
 func queryReturnsData(cmd string) bool {
 	switch cmd {
-	case ":one", ":many", ":batchone", ":batchmany":
+	case ":one", cmdMany, ":batchone", ":batchmany":
 		return true
 	default:
 		return false
@@ -1200,11 +1240,11 @@ func resultTypes(query *plugin.Query, ret queryValue, opts *options) ([]string, 
 	switch query.GetCmd() {
 	case ":one":
 		return []string{ret.defineType(opts), resultErrorName}, nil
-	case ":many":
+	case cmdMany:
 		return []string{"[]" + ret.defineType(opts), resultErrorName}, nil
-	case ":exec":
+	case cmdExec:
 		return []string{resultErrorName}, nil
-	case ":execrows", cmdCopyFrom:
+	case cmdExecRows, cmdCopyFrom:
 		return []string{"int64", resultErrorName}, nil
 	case ":execresult":
 		return []string{"pgconn.CommandTag", resultErrorName}, nil

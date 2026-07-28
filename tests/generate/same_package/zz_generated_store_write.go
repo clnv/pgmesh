@@ -50,6 +50,20 @@ func (q *writeQueries) mirror(fn func(*Queries) error) error {
 	return nil
 }
 
+// CopyUsers executes the generated CopyUsers query.
+func (q *writeQueries) CopyUsers(ctx context.Context, arg []*CopyUsersParams) (int64, error) {
+	rv0, err := q.main.CopyUsers(ctx, arg)
+	if err != nil {
+		var zero0 int64
+		return zero0, err
+	}
+	mirrorErr := q.mirror(func(mirror *Queries) error {
+		_, err := mirror.CopyUsers(ctx, arg)
+		return err
+	})
+	return rv0, mirrorErr
+}
+
 // CreateUser executes the generated CreateUser query.
 func (q *writeQueries) CreateUser(ctx context.Context, arg *CreateUserParams) (*User, error) {
 	rv0, err := q.main.CreateUser(ctx, arg)
@@ -59,6 +73,30 @@ func (q *writeQueries) CreateUser(ctx context.Context, arg *CreateUserParams) (*
 	}
 	mirrorErr := q.mirror(func(mirror *Queries) error {
 		_, err := mirror.CreateUser(ctx, arg)
+		return err
+	})
+	return rv0, mirrorErr
+}
+
+// DeleteAllUsers executes the generated DeleteAllUsers query.
+func (q *writeQueries) DeleteAllUsers(ctx context.Context) error {
+	if err := q.main.DeleteAllUsers(ctx); err != nil {
+		return err
+	}
+	return q.mirror(func(mirror *Queries) error {
+		return mirror.DeleteAllUsers(ctx)
+	})
+}
+
+// DeleteAllUsersByName executes the generated DeleteAllUsersByName query.
+func (q *writeQueries) DeleteAllUsersByName(ctx context.Context, name string) (int64, error) {
+	rv0, err := q.main.DeleteAllUsersByName(ctx, name)
+	if err != nil {
+		var zero0 int64
+		return zero0, err
+	}
+	mirrorErr := q.mirror(func(mirror *Queries) error {
+		_, err := mirror.DeleteAllUsersByName(ctx, name)
 		return err
 	})
 	return rv0, mirrorErr

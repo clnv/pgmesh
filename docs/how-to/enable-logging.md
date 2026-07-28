@@ -36,7 +36,6 @@ structured attributes:
 | `vshard` | Virtual shard index, encoded as a string |
 | `replica_set` | Physical replica-set name |
 | `route_mode` | `read`, `primary`, or `transaction` |
-| `write_mirror_count` | Synchronous mirrors used by the operation |
 | `error` | Error value, present only when the operation failed |
 
 A routing failure is still logged but has no route attributes because no shard

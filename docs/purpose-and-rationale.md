@@ -117,12 +117,15 @@ pgmesh is not:
 - a replication system or replication-lag monitor;
 - a schema migration or data-rebalancing tool;
 - a distributed transaction coordinator;
-- a scatter-gather query engine;
-- an automatic cross-shard batch or `COPY FROM` partitioner.
+- a general-purpose scatter-gather query engine;
+- an automatic cross-shard sqlc `:batch*` partitioner.
 
 Applications own pool lifecycle, database credentials, replication, schema
 rollout, shard movement, and consistency policy. pgmesh provides a small,
-validated routing layer on top of those choices.
+validated routing layer on top of those choices. Explicit `shard: all()`
+queries and routed `:copyfrom` operations cover bounded generated-store cases;
+they do not provide distributed transactions, global SQL planning, ordering,
+limits, or aggregation.
 
 ## When to use it
 

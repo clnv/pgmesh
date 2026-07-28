@@ -54,8 +54,9 @@ so they can prove which endpoint handled a generated read. The suite checks
 round-robin replica reads, primary fallback, forced-primary reads, virtual-shard
 write routing, synchronous mirrors, transaction pinning, mirror suppression in
 transactions, real pgx `ErrNoRows` mirror handling, nullable/network/range
-scanning, separate-package generation, `COPY FROM` mirror fan-out, and the
-deliberate lack of mirror fan-out for generated batch writes.
+scanning, separate-package generation, physical-shard scatter, grouped
+`COPY FROM` routing and mirror fan-out, and the deliberate lack of mirror
+fan-out for generated batch writes.
 
 Run the complete local validation with:
 

@@ -49,10 +49,11 @@ default explicit bucket boundaries are `0.001`, `0.005`, `0.01`, `0.05`, `0.1`,
 `0.5`, `1`, `5`, and `10` seconds; applications can override the aggregation
 with an SDK view when their latency objectives need different boundaries.
 
-The span name is `pgmesh.query.Store.<QueryName>`, for example
-`pgmesh.query.Store.CreateUser`. Every span records the query name and
-kind. The duration metric records the same bounded dimensions. Successfully
-routed operations also record the selected physical route:
+The span name is `pgmesh.query.<SubStore>.<QueryName>`, using the query's
+`store:` annotation. For example, `store: Users` on `CreateUser` produces
+`pgmesh.query.Users.CreateUser`. Every span records the query name and kind.
+The duration metric records the same bounded dimensions. Successfully routed
+operations also record the selected physical route:
 
 | Attribute | When recorded | Value |
 | --- | --- | --- |
@@ -61,16 +62,15 @@ routed operations also record the selected physical route:
 | `error.type` | Failed spans and metric points | Predictable Go error type |
 | `pgmesh.route.replica_set` | Successfully routed spans and metric points | Physical replica-set name |
 | `pgmesh.route.mode` | Successfully routed spans and metric points | `read`, `primary`, or `transaction` |
-| `pgmesh.route.write_mirror_count` | Successfully routed spans and metric points | Synchronous mirrors used by the operation |
 
 Virtual-shard indexes are deliberately excluded from OpenTelemetry attributes
 because they create one dimension value per virtual shard. Debug logs retain
-the selected `vshard` for individual-query diagnosis.
+the selected `vshard` for individual-query diagnosis. Scatter and grouped-copy
+operations retain one logical span for the generated method and omit a
+misleading single virtual-shard or replica-set value.
 
 Routing, database, and mirror errors are recorded on the span and set its status
-to error. Successful operations omit `error.type`. Transaction-bound operations
-report zero write mirrors because transactions deliberately drop cross-database
-mirrors.
+to error. Successful operations omit `error.type`.
 
 The span-derived context is passed into the selected generated query method. If
 the pgx pool is instrumented separately, its database spans therefore appear as

@@ -20,6 +20,7 @@ func generateWrapper(
 	if err != nil {
 		return nil, err
 	}
+	sharded := hasShardOperations(queries)
 	groups, err := collectStoreGroups(queries, opts)
 	if err != nil {
 		return nil, err
@@ -32,9 +33,9 @@ func generateWrapper(
 	if err := validateSQLCTypeAliases(opts, queries, groups, aliases); err != nil {
 		return nil, err
 	}
-	if len(routes) > 0 {
+	if sharded {
 		for _, query := range queries {
-			if query.route == nil {
+			if query.shardMode == shardModeNone {
 				return nil, fmt.Errorf(
 					"query %s must declare shard metadata because this store contains sharded queries; move unsharded queries to another generated store",
 					query.methodName,
@@ -47,8 +48,10 @@ func generateWrapper(
 	}
 	imports.addNamed(defaultRuntimeAlias, opts.RuntimeImportPath)
 	imports.add(defaultContext)
+	imports.add(defaultErrorsPackage)
 	imports.add(defaultFMT)
 	imports.add(defaultSlog)
+	imports.add(defaultSync)
 	imports.add(defaultMetric)
 	imports.add(defaultTrace)
 	imports.add(defaultPGXPackage)
@@ -70,7 +73,7 @@ func generateWrapper(
 	if err := appendFile(derivedOutputFileName(opts.OutputFileName, "interfaces"), func(out *bytes.Buffer) {
 		writeSQLCTypeAliases(out, opts, aliases)
 		writeQueryInterfaces(out, opts, queries, groups)
-		if len(routes) > 0 {
+		if sharded {
 			writeShardResolverInterface(out, opts, routes)
 		}
 	}); err != nil {
@@ -103,7 +106,7 @@ func generateWrapper(
 		}
 	}
 	if err := appendFile(derivedOutputFileName(opts.OutputFileName, "sharded"), func(out *bytes.Buffer) {
-		if len(routes) > 0 {
+		if sharded {
 			writeShardedStore(out, opts)
 		}
 	}); err != nil {
@@ -222,7 +225,7 @@ func writeStoreGroup(out *bytes.Buffer, opts *options, group *storeGroup) {
 	out.WriteString("}\n\n")
 
 	for index := range group.queries {
-		writeMeshStoreQueryMethod(out, opts, &group.queries[index])
+		writeMeshStoreQueryMethod(out, &group.queries[index])
 	}
 }
 
@@ -510,9 +513,9 @@ func writeNodeConstructor(out *bytes.Buffer, opts *options) {
 	out.WriteString("}\n\n")
 }
 
-func hasShardRoutes(queries []generatedQuery) bool {
+func hasShardOperations(queries []generatedQuery) bool {
 	for index := range queries {
-		if queries[index].route != nil {
+		if queries[index].shardMode != shardModeNone {
 			return true
 		}
 	}
@@ -622,7 +625,7 @@ func writeStoreConfiguration(
 
 	fmt.Fprintf(out, "type %s[SK any] struct {\n", defaultMeshStoreType)
 	fmt.Fprintf(out, "\tmesh *pgmesh.Mesh[*%s, *%s, SK]\n", defaultReadType, defaultStoreType)
-	if hasShardRoutes(queries) {
+	if hasShardOperations(queries) {
 		fmt.Fprintf(out, "\tresolver %s[SK]\n", opts.ResolverInterfaceName)
 	}
 	out.WriteString("}\n\n")
@@ -677,7 +680,16 @@ func writeStoreConfiguration(
 	out.WriteString("}\n\n")
 }
 
-func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generatedQuery) {
+func writeMeshStoreQueryMethod(out *bytes.Buffer, query *generatedQuery) {
+	switch query.shardMode {
+	case shardModeAll:
+		writeAllShardsQueryMethod(out, query)
+		return
+	case shardModeGroupedCopy:
+		writeGroupedCopyQueryMethod(out, query)
+		return
+	}
+
 	receiverType := defaultGroupType
 	store := defaultReceiverName + ".store"
 	traced := lastResultIsError(query.results)
@@ -708,7 +720,7 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generate
 			out,
 			"\tctx, querySpan := %s.mesh.StartSpan(ctx, %q, %q, %s)\n",
 			store,
-			opts.StoreInterfaceName,
+			query.store,
 			query.methodName,
 			queryKindConstant(query.kind),
 		)
@@ -748,7 +760,7 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generate
 		out.WriteString("\n\t// Transactional reads must use their transaction.\n")
 		out.WriteString("\tif options.tx != nil {\n")
 		if traced {
-			out.WriteString("\t\tquerySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)\n")
+			out.WriteString("\t\tquerySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)\n")
 		}
 		fmt.Fprintf(
 			out,
@@ -761,14 +773,14 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generate
 		out.WriteString("\n\t// Explicit primary reads bypass replicas.\n")
 		out.WriteString("\tif options.primary {\n")
 		if traced {
-			out.WriteString("\t\tquerySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)\n")
+			out.WriteString("\t\tquerySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)\n")
 		}
 		fmt.Fprintf(out, "\t\treturn shard.Write().%s(%s)\n", query.methodName, args)
 		out.WriteString("\t}\n")
 
 		out.WriteString("\n\t// Ordinary reads use the shard's replica route.\n")
 		if traced {
-			out.WriteString("\tquerySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)\n")
+			out.WriteString("\tquerySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)\n")
 		}
 		fmt.Fprintf(out, "\treturn shard.Read().%s(%s)\n", query.methodName, args)
 	} else {
@@ -776,24 +788,288 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generate
 		out.WriteString("\ttarget := shard.Write()\n")
 		if traced {
 			out.WriteString("\tmode := pgmesh.RouteModePrimary\n")
-			out.WriteString("\twriteMirrorCount := shard.WriteMirrorCount()\n")
 		}
 		out.WriteString("\tif options.tx != nil {\n")
 		out.WriteString("\t\ttarget = target.WithTx(options.tx)\n")
 		if traced {
 			out.WriteString("\t\tmode = pgmesh.RouteModeTransaction\n")
-			out.WriteString("\t\twriteMirrorCount = 0\n")
 		}
 		out.WriteString("\t}\n")
 
 		if traced {
 			out.WriteString("\n\t// Execute the write after recording its resolved route.\n")
-			out.WriteString("\tquerySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)\n")
+			out.WriteString("\tquerySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode)\n")
 		} else {
 			out.WriteString("\n\t// Execute the write on the selected target.\n")
 		}
 		fmt.Fprintf(out, "\treturn target.%s(%s)\n", query.methodName, args)
 	}
+	out.WriteString("}\n\n")
+}
+
+func writeAllShardsQueryMethod(out *bytes.Buffer, query *generatedQuery) {
+	receiverType := defaultGroupType
+	store := defaultReceiverName + ".store"
+	resultSignature, resultNames, errName := namedResultsSignature(
+		query.storeParams,
+		query.results,
+		defaultReceiverName,
+		"storeOptions",
+	)
+	fmt.Fprintf(out, "// %s executes the generated query on every physical shard.\n", query.methodName)
+	fmt.Fprintf(
+		out,
+		"func (%s *%s[SK]) %s(%s)%s {\n",
+		defaultReceiverName,
+		receiverType,
+		query.methodName,
+		storeParamsSignature(query.storeParams),
+		resultSignature,
+	)
+	fmt.Fprintf(
+		out,
+		"\tctx, querySpan := %s.mesh.StartSpan(ctx, %q, %q, %s)\n",
+		store,
+		query.store,
+		query.methodName,
+		queryKindConstant(query.kind),
+	)
+	fmt.Fprintf(out, "\tdefer func() { querySpan.End(%s) }()\n\n", errName)
+	out.WriteString("\toptions := applyQueryOptions(storeOptions...)\n")
+	fmt.Fprintf(out, "\tshards := %s.mesh.AllShards()\n", store)
+	out.WriteString("\tif options.tx != nil {\n")
+	out.WriteString("\t\tquerySpan.SetMultiRoute(pgmesh.RouteModeTransaction)\n")
+	fmt.Fprintf(out, "\t\t%s = pgmesh.ErrCrossShardTransaction\n", errName)
+	fmt.Fprintf(out, "\t\treturn %s\n", strings.Join(resultNames, ", "))
+	out.WriteString("\t}\n\n")
+
+	if query.kind == queryKindRead {
+		out.WriteString("\tmode := pgmesh.RouteModeRead\n")
+		out.WriteString("\tif options.primary { mode = pgmesh.RouteModePrimary }\n")
+	} else {
+		out.WriteString("\tmode := pgmesh.RouteModePrimary\n")
+	}
+	out.WriteString("\tquerySpan.SetMultiRoute(mode)\n\n")
+
+	valueType := ""
+	if len(query.results) > 1 {
+		valueType = query.results[0]
+	}
+	out.WriteString("\ttype shardResult struct {\n")
+	if valueType != "" {
+		fmt.Fprintf(out, "\t\tvalue %s\n", valueType)
+	}
+	out.WriteString("\t\terr error\n")
+	out.WriteString("\t}\n")
+	out.WriteString("\tshardResults := make([]shardResult, len(shards))\n")
+	out.WriteString("\tvar group sync.WaitGroup\n")
+	out.WriteString("\tfor index, shard := range shards {\n")
+	out.WriteString("\t\tgroup.Go(func() {\n")
+	args := strings.Join(query.callArgs, ", ")
+	call := func(target string) {
+		if valueType == "" {
+			fmt.Fprintf(out, "\t\t\tshardResults[index].err = %s.%s(%s)\n", target, query.methodName, args)
+			return
+		}
+		fmt.Fprintf(
+			out,
+			"\t\t\tshardResults[index].value, shardResults[index].err = %s.%s(%s)\n",
+			target,
+			query.methodName,
+			args,
+		)
+	}
+	if query.kind == queryKindRead {
+		out.WriteString("\t\t\tif options.primary {\n")
+		if valueType == "" {
+			fmt.Fprintf(out, "\t\t\t\tshardResults[index].err = shard.Write().%s(%s)\n", query.methodName, args)
+		} else {
+			fmt.Fprintf(
+				out,
+				"\t\t\t\tshardResults[index].value, shardResults[index].err = shard.Write().%s(%s)\n",
+				query.methodName,
+				args,
+			)
+		}
+		out.WriteString("\t\t\t\treturn\n")
+		out.WriteString("\t\t\t}\n")
+		call("shard.Read()")
+	} else {
+		call("shard.Write()")
+	}
+	out.WriteString("\t\t})\n")
+	out.WriteString("\t}\n")
+	out.WriteString("\tgroup.Wait()\n\n")
+
+	out.WriteString("\tshardErrors := make([]error, 0, len(shards))\n")
+	out.WriteString("\tfor index, shardResult := range shardResults {\n")
+	out.WriteString("\t\tif shardResult.err != nil {\n")
+	fmt.Fprintf(
+		out,
+		"\t\t\tshardErrors = append(shardErrors, fmt.Errorf(%q, shards[index].Name(), shardResult.err))\n",
+		"query "+query.methodName+" on replica set %q: %w",
+	)
+	out.WriteString("\t\t}\n")
+	out.WriteString("\t}\n")
+	fmt.Fprintf(out, "\t%s = errors.Join(shardErrors...)\n", errName)
+	fmt.Fprintf(out, "\tif %s != nil { return %s }\n", errName, strings.Join(resultNames, ", "))
+
+	if valueType != "" {
+		switch query.command {
+		case cmdMany:
+			out.WriteString("\tfor _, shardResult := range shardResults {\n")
+			fmt.Fprintf(out, "\t\t%s = append(%s, shardResult.value...)\n", resultNames[0], resultNames[0])
+			out.WriteString("\t}\n")
+		case cmdExecRows:
+			out.WriteString("\tfor _, shardResult := range shardResults {\n")
+			fmt.Fprintf(out, "\t\t%s += shardResult.value\n", resultNames[0])
+			out.WriteString("\t}\n")
+		}
+	}
+	fmt.Fprintf(out, "\treturn %s\n", strings.Join(resultNames, ", "))
+	out.WriteString("}\n\n")
+}
+
+func writeGroupedCopyQueryMethod(out *bytes.Buffer, query *generatedQuery) {
+	receiverType := defaultGroupType
+	store := defaultReceiverName + ".store"
+	resultSignature, resultNames, errName := namedResultsSignature(
+		query.storeParams,
+		query.results,
+		defaultReceiverName,
+		"storeOptions",
+	)
+	fmt.Fprintf(out, "// %s groups rows by physical shard and executes one copy per group.\n", query.methodName)
+	fmt.Fprintf(
+		out,
+		"func (%s *%s[SK]) %s(%s)%s {\n",
+		defaultReceiverName,
+		receiverType,
+		query.methodName,
+		storeParamsSignature(query.storeParams),
+		resultSignature,
+	)
+	fmt.Fprintf(
+		out,
+		"\tctx, querySpan := %s.mesh.StartSpan(ctx, %q, %q, %s)\n",
+		store,
+		query.store,
+		query.methodName,
+		queryKindConstant(query.kind),
+	)
+	fmt.Fprintf(out, "\tdefer func() { querySpan.End(%s) }()\n\n", errName)
+	out.WriteString("\toptions := applyQueryOptions(storeOptions...)\n")
+	out.WriteString("\ttype copyShardGroup struct {\n")
+	fmt.Fprintf(
+		out,
+		"\t\tshard *pgmesh.Shard[*%s, *%s]\n",
+		defaultReadType,
+		defaultStoreType,
+	)
+	fmt.Fprintf(out, "\t\targs %s\n", query.params[1].typ)
+	out.WriteString("\t}\n")
+	out.WriteString("\tgroupsByName := make(map[string]*copyShardGroup)\n")
+	inputName := query.storeParams[1].name
+	fmt.Fprintf(out, "\tfor inputIndex, item := range %s {\n", inputName)
+	out.WriteString("\t\tvar shardKey SK\n")
+	fmt.Fprintf(out, "\t\tif %s.resolver != nil {\n", store)
+	routeArgs := make([]string, 0, len(query.route.operands))
+	for _, operand := range query.route.operands {
+		expression := strings.Replace(operand.expression, "arg.", "item.", 1)
+		if query.shardArgs == nil && query.arg.structType == nil {
+			expression = "item"
+		}
+		routeArgs = append(routeArgs, expression)
+	}
+	fmt.Fprintf(
+		out,
+		"\t\t\tshardKey = %s.resolver.%s(%s)\n",
+		store,
+		query.route.methodName,
+		strings.Join(routeArgs, ", "),
+	)
+	out.WriteString("\t\t}\n")
+	fmt.Fprintf(out, "\t\tshard, routeErr := %s.mesh.Shard(shardKey)\n", store)
+	out.WriteString("\t\tif routeErr != nil {\n")
+	fmt.Fprintf(
+		out,
+		"\t\t\t%s = fmt.Errorf(%q, inputIndex, routeErr)\n",
+		errName,
+		"route "+query.methodName+" input %d: %w",
+	)
+	fmt.Fprintf(out, "\t\t\treturn %s\n", strings.Join(resultNames, ", "))
+	out.WriteString("\t\t}\n")
+	out.WriteString("\t\tshardGroup := groupsByName[shard.Name()]\n")
+	out.WriteString("\t\tif shardGroup == nil {\n")
+	fmt.Fprintf(
+		out,
+		"\t\t\tshardGroup = &copyShardGroup{shard: shard, args: make(%s, 0)}\n",
+		query.params[1].typ,
+	)
+	out.WriteString("\t\t\tgroupsByName[shard.Name()] = shardGroup\n")
+	out.WriteString("\t\t}\n")
+	if query.shardArgs != nil {
+		out.WriteString("\t\tshardGroup.args = append(shardGroup.args, item.sqlcParams())\n")
+	} else {
+		out.WriteString("\t\tshardGroup.args = append(shardGroup.args, item)\n")
+	}
+	out.WriteString("\t}\n\n")
+
+	out.WriteString("\tgroups := make([]*copyShardGroup, 0, len(groupsByName))\n")
+	fmt.Fprintf(out, "\tfor _, shard := range %s.mesh.AllShards() {\n", store)
+	out.WriteString("\t\tif shardGroup := groupsByName[shard.Name()]; shardGroup != nil {\n")
+	out.WriteString("\t\t\tgroups = append(groups, shardGroup)\n")
+	out.WriteString("\t\t}\n")
+	out.WriteString("\t}\n")
+	out.WriteString("\tif options.tx != nil && len(groups) > 1 {\n")
+	out.WriteString("\t\tquerySpan.SetMultiRoute(pgmesh.RouteModeTransaction)\n")
+	fmt.Fprintf(out, "\t\t%s = pgmesh.ErrCrossShardTransaction\n", errName)
+	fmt.Fprintf(out, "\t\treturn %s\n", strings.Join(resultNames, ", "))
+	out.WriteString("\t}\n\n")
+
+	out.WriteString("\tmode := pgmesh.RouteModePrimary\n")
+	out.WriteString("\tif options.tx != nil {\n")
+	out.WriteString("\t\tmode = pgmesh.RouteModeTransaction\n")
+	out.WriteString("\t}\n")
+	out.WriteString("\tquerySpan.SetMultiRoute(mode)\n")
+	out.WriteString("\tif len(groups) == 0 { return ")
+	out.WriteString(strings.Join(resultNames, ", "))
+	out.WriteString(" }\n\n")
+
+	out.WriteString("\ttype copyResult struct {\n")
+	out.WriteString("\t\tcount int64\n")
+	out.WriteString("\t\terr error\n")
+	out.WriteString("\t}\n")
+	out.WriteString("\tcopyResults := make([]copyResult, len(groups))\n")
+	out.WriteString("\tvar waitGroup sync.WaitGroup\n")
+	out.WriteString("\tfor index, shardGroup := range groups {\n")
+	out.WriteString("\t\twaitGroup.Go(func() {\n")
+	out.WriteString("\t\t\ttarget := shardGroup.shard.Write()\n")
+	out.WriteString("\t\t\tif options.tx != nil { target = target.WithTx(options.tx) }\n")
+	fmt.Fprintf(
+		out,
+		"\t\t\tcopyResults[index].count, copyResults[index].err = target.%s(ctx, shardGroup.args)\n",
+		query.methodName,
+	)
+	out.WriteString("\t\t})\n")
+	out.WriteString("\t}\n")
+	out.WriteString("\twaitGroup.Wait()\n\n")
+	out.WriteString("\tcopyErrors := make([]error, 0, len(groups))\n")
+	out.WriteString("\tfor index, copyResult := range copyResults {\n")
+	out.WriteString("\t\tif copyResult.err != nil {\n")
+	fmt.Fprintf(
+		out,
+		"\t\t\tcopyErrors = append(copyErrors, fmt.Errorf(%q, groups[index].shard.Name(), copyResult.err))\n",
+		"query "+query.methodName+" on replica set %q: %w",
+	)
+	out.WriteString("\t\t}\n")
+	out.WriteString("\t}\n")
+	fmt.Fprintf(out, "\t%s = errors.Join(copyErrors...)\n", errName)
+	fmt.Fprintf(out, "\tif %s != nil { return %s }\n", errName, strings.Join(resultNames, ", "))
+	out.WriteString("\tfor _, copyResult := range copyResults {\n")
+	fmt.Fprintf(out, "\t\t%s += copyResult.count\n", resultNames[0])
+	out.WriteString("\t}\n")
+	fmt.Fprintf(out, "\treturn %s\n", strings.Join(resultNames, ", "))
 	out.WriteString("}\n\n")
 }
 

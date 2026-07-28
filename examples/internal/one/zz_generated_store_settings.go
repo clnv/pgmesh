@@ -35,7 +35,7 @@ func (q *meshStore[SK]) Settings() Settings {
 // GetSetting executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) GetSetting(ctx context.Context, key string, storeOptions ...QueryOption) (result *ApplicationSetting, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "GetSetting", pgmesh.QueryKindRead)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Settings", "GetSetting", pgmesh.QueryKindRead)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -50,25 +50,25 @@ func (q *groupedMeshStore[SK]) GetSetting(ctx context.Context, key string, store
 
 	// Transactional reads must use their transaction.
 	if options.tx != nil {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).GetSetting(ctx, key)
 	}
 
 	// Explicit primary reads bypass replicas.
 	if options.primary {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().GetSetting(ctx, key)
 	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
 	return shard.Read().GetSetting(ctx, key)
 }
 
 // UpsertSetting executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) UpsertSetting(ctx context.Context, arg *UpsertSettingParams, storeOptions ...QueryOption) (result *ApplicationSetting, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "UpsertSetting", pgmesh.QueryKindWrite)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Settings", "UpsertSetting", pgmesh.QueryKindWrite)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -84,14 +84,12 @@ func (q *groupedMeshStore[SK]) UpsertSetting(ctx context.Context, arg *UpsertSet
 	// Select the primary write route, or the transaction when provided.
 	target := shard.Write()
 	mode := pgmesh.RouteModePrimary
-	writeMirrorCount := shard.WriteMirrorCount()
 	if options.tx != nil {
 		target = target.WithTx(options.tx)
 		mode = pgmesh.RouteModeTransaction
-		writeMirrorCount = 0
 	}
 
 	// Execute the write after recording its resolved route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode)
 	return target.UpsertSetting(ctx, arg)
 }

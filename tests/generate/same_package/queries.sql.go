@@ -11,6 +11,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type CopyUsersParams struct {
+	ID       int64
+	TenantID int64
+	Name     string
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (id, tenant_id, name)
 VALUES ($1, $2, $3)
@@ -31,6 +37,34 @@ func (q *Queries) CreateUser(ctx context.Context, arg *CreateUserParams) (*User,
 	var i User
 	err := row.Scan(&i.ID, &i.TenantID, &i.Name)
 	return &i, err
+}
+
+const deleteAllUsers = `-- name: DeleteAllUsers :exec
+DELETE FROM users
+`
+
+// kind: write
+// shard: all()
+// store: Users
+func (q *Queries) DeleteAllUsers(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteAllUsers)
+	return err
+}
+
+const deleteAllUsersByName = `-- name: DeleteAllUsersByName :execrows
+DELETE FROM users
+WHERE name = $1
+`
+
+// kind: write
+// shard: all()
+// store: Users
+func (q *Queries) DeleteAllUsersByName(ctx context.Context, name string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAllUsersByName, name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getAnalysis = `-- name: GetAnalysis :one
@@ -108,6 +142,35 @@ func (q *Queries) GetUser(ctx context.Context, arg *GetUserParams) (*User, error
 	var i User
 	err := row.Scan(&i.ID, &i.TenantID, &i.Name)
 	return &i, err
+}
+
+const listAllUsers = `-- name: ListAllUsers :many
+SELECT id, tenant_id, name
+FROM users
+ORDER BY id
+`
+
+// kind: read
+// shard: all()
+// store: Users
+func (q *Queries) ListAllUsers(ctx context.Context) ([]*User, error) {
+	rows, err := q.db.Query(ctx, listAllUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(&i.ID, &i.TenantID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, &i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listP2PMessageIDsByChat = `-- name: ListP2PMessageIDsByChat :many

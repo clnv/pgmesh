@@ -14,6 +14,8 @@ type readQuerier interface {
 	GetTenantUserAnalysis(ctx context.Context, arg *GetTenantUserAnalysisParams) (*GetTenantUserAnalysisRow, error)
 	// GetUser executes the generated GetUser query.
 	GetUser(ctx context.Context, arg *GetUserParams) (*User, error)
+	// ListAllUsers executes the generated ListAllUsers query.
+	ListAllUsers(ctx context.Context) ([]*User, error)
 	// ListP2PMessageIDsByChat executes the generated ListP2PMessageIDsByChat query.
 	ListP2PMessageIDsByChat(ctx context.Context, arg *ListP2PMessageIDsByChatParams) ([]interface{}, error)
 	// ListP2PMessagesByChat executes the generated ListP2PMessagesByChat query.
@@ -22,8 +24,14 @@ type readQuerier interface {
 
 // writeQuerier exposes generated write queries.
 type writeQuerier interface {
+	// CopyUsers executes the generated CopyUsers query.
+	CopyUsers(ctx context.Context, arg []*CopyUsersParams) (int64, error)
 	// CreateUser executes the generated CreateUser query.
 	CreateUser(ctx context.Context, arg *CreateUserParams) (*User, error)
+	// DeleteAllUsers executes the generated DeleteAllUsers query.
+	DeleteAllUsers(ctx context.Context) error
+	// DeleteAllUsersByName executes the generated DeleteAllUsersByName query.
+	DeleteAllUsersByName(ctx context.Context, name string) (int64, error)
 	// UpdateUserName executes the generated UpdateUserName query.
 	UpdateUserName(ctx context.Context, arg *UpdateUserNameParams) (*User, error)
 }

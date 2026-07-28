@@ -51,6 +51,16 @@ func (q *readQueries) GetUser(ctx context.Context, arg *GetUserParams) (*User, e
 	return rv0, nil
 }
 
+// ListAllUsers executes the generated ListAllUsers query.
+func (q *readQueries) ListAllUsers(ctx context.Context) ([]*User, error) {
+	rv0, err := q.main.ListAllUsers(ctx)
+	if err != nil {
+		var zero0 []*User
+		return zero0, err
+	}
+	return rv0, nil
+}
+
 // ListP2PMessageIDsByChat executes the generated ListP2PMessageIDsByChat query.
 func (q *readQueries) ListP2PMessageIDsByChat(ctx context.Context, arg *ListP2PMessageIDsByChatParams) ([]interface{}, error) {
 	rv0, err := q.main.ListP2PMessageIDsByChat(ctx, arg)
