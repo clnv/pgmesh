@@ -253,7 +253,7 @@ func (tenantResolver) Tenant(int64) uint64 {
 	return 0
 }
 
-func (tenantResolver) Messagekey(int64, int64, bool) uint64 {
+func (tenantResolver) MessageKey(int64, int64, bool) uint64 {
 	return 0
 }
 
@@ -263,7 +263,7 @@ func (identityTenantResolver) Tenant(tenantID int64) uint64 {
 	return uint64(tenantID) //nolint:gosec // Test fixtures use nonnegative IDs.
 }
 
-func (identityTenantResolver) Messagekey(userID, _ int64, _ bool) uint64 {
+func (identityTenantResolver) MessageKey(userID, _ int64, _ bool) uint64 {
 	return uint64(userID) //nolint:gosec // Test fixtures use nonnegative IDs.
 }
 
@@ -282,7 +282,7 @@ func (r recordingTenantResolver) Tenant(tenantID int64) uint64 {
 	return 0
 }
 
-func (recordingTenantResolver) Messagekey(int64, int64, bool) uint64 {
+func (recordingTenantResolver) MessageKey(int64, int64, bool) uint64 {
 	return 0
 }
 
@@ -296,7 +296,7 @@ func (recordingMessageKeyResolver) Tenant(int64) uint64 {
 	return 0
 }
 
-func (r *recordingMessageKeyResolver) Messagekey(
+func (r *recordingMessageKeyResolver) MessageKey(
 	userID int64,
 	toUserOrGroupID int64,
 	inGroup bool,

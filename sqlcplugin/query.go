@@ -879,6 +879,10 @@ func routeMethodName(name string, opts *options) string {
 			parts[index] = "P2P"
 			continue
 		}
+		if strings.IndexFunc(part, unicode.IsUpper) >= 0 {
+			parts[index] = title(part)
+			continue
+		}
 		parts[index] = structName(part, opts)
 	}
 	return strings.Join(parts, "")
