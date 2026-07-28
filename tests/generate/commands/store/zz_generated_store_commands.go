@@ -57,18 +57,19 @@ func (q *groupedMeshStore[SK]) BatchGetCommandUser(ctx context.Context, id []int
 	// Apply options that can override the default route.
 	options := applyQueryOptions(storeOptions...)
 
+	switch {
 	// Transactional reads must use their transaction.
-	if options.tx != nil {
+	case options.tx != nil:
 		return shard.Write().WithTx(options.tx).BatchGetCommandUser(ctx, id)
-	}
 
 	// Explicit primary reads bypass replicas.
-	if options.primary {
+	case options.primary:
 		return shard.Write().BatchGetCommandUser(ctx, id)
-	}
 
 	// Ordinary reads use the shard's replica route.
-	return shard.Read().BatchGetCommandUser(ctx, id)
+	default:
+		return shard.Read().BatchGetCommandUser(ctx, id)
+	}
 }
 
 // BatchInsertCommandUsers executes the generated query on its target shard.
@@ -99,18 +100,19 @@ func (q *groupedMeshStore[SK]) BatchListCommandUsersByTenant(ctx context.Context
 	// Apply options that can override the default route.
 	options := applyQueryOptions(storeOptions...)
 
+	switch {
 	// Transactional reads must use their transaction.
-	if options.tx != nil {
+	case options.tx != nil:
 		return shard.Write().WithTx(options.tx).BatchListCommandUsersByTenant(ctx, tenantID)
-	}
 
 	// Explicit primary reads bypass replicas.
-	if options.primary {
+	case options.primary:
 		return shard.Write().BatchListCommandUsersByTenant(ctx, tenantID)
-	}
 
 	// Ordinary reads use the shard's replica route.
-	return shard.Read().BatchListCommandUsersByTenant(ctx, tenantID)
+	default:
+		return shard.Read().BatchListCommandUsersByTenant(ctx, tenantID)
+	}
 }
 
 // CopyCommandUsers executes the generated query on its target shard.
@@ -216,21 +218,22 @@ func (q *groupedMeshStore[SK]) GetCommandUser(ctx context.Context, id int64, sto
 	// Apply options that can override the default route.
 	options := applyQueryOptions(storeOptions...)
 
+	switch {
 	// Transactional reads must use their transaction.
-	if options.tx != nil {
+	case options.tx != nil:
 		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).GetCommandUser(ctx, id)
-	}
 
 	// Explicit primary reads bypass replicas.
-	if options.primary {
+	case options.primary:
 		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().GetCommandUser(ctx, id)
-	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
-	return shard.Read().GetCommandUser(ctx, id)
+	default:
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
+		return shard.Read().GetCommandUser(ctx, id)
+	}
 }
 
 // ListCommandUsers executes the generated query on its target shard.
@@ -249,21 +252,22 @@ func (q *groupedMeshStore[SK]) ListCommandUsers(ctx context.Context, storeOption
 	// Apply options that can override the default route.
 	options := applyQueryOptions(storeOptions...)
 
+	switch {
 	// Transactional reads must use their transaction.
-	if options.tx != nil {
+	case options.tx != nil:
 		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).ListCommandUsers(ctx)
-	}
 
 	// Explicit primary reads bypass replicas.
-	if options.primary {
+	case options.primary:
 		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().ListCommandUsers(ctx)
-	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
-	return shard.Read().ListCommandUsers(ctx)
+	default:
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
+		return shard.Read().ListCommandUsers(ctx)
+	}
 }
 
 // TouchCommandUser executes the generated query on its target shard.

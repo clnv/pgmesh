@@ -53,21 +53,22 @@ func (q *groupedMeshStore[SK]) GetAccount(ctx context.Context, arg *GetAccountPa
 	// Apply options that can override the default route.
 	options := applyQueryOptions(storeOptions...)
 
+	switch {
 	// Transactional reads must use their transaction.
-	if options.tx != nil {
+	case options.tx != nil:
 		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).GetAccount(ctx, arg)
-	}
 
 	// Explicit primary reads bypass replicas.
-	if options.primary {
+	case options.primary:
 		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().GetAccount(ctx, arg)
-	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
-	return shard.Read().GetAccount(ctx, arg)
+	default:
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
+		return shard.Read().GetAccount(ctx, arg)
+	}
 }
 
 // UpdateAccountName executes the generated query on its target shard.

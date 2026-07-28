@@ -95,21 +95,22 @@ func (q *groupedMeshStore[SK]) ListP2PMessageIDsByChat(ctx context.Context, arg 
 	// Apply options that can override the default route.
 	options := applyQueryOptions(storeOptions...)
 
+	switch {
 	// Transactional reads must use their transaction.
-	if options.tx != nil {
+	case options.tx != nil:
 		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).ListP2PMessageIDsByChat(ctx, arg.sqlcParams())
-	}
 
 	// Explicit primary reads bypass replicas.
-	if options.primary {
+	case options.primary:
 		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().ListP2PMessageIDsByChat(ctx, arg.sqlcParams())
-	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
-	return shard.Read().ListP2PMessageIDsByChat(ctx, arg.sqlcParams())
+	default:
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
+		return shard.Read().ListP2PMessageIDsByChat(ctx, arg.sqlcParams())
+	}
 }
 
 // ListP2PMessagesByChat executes the generated query on its target shard.
@@ -131,19 +132,20 @@ func (q *groupedMeshStore[SK]) ListP2PMessagesByChat(ctx context.Context, arg *L
 	// Apply options that can override the default route.
 	options := applyQueryOptions(storeOptions...)
 
+	switch {
 	// Transactional reads must use their transaction.
-	if options.tx != nil {
+	case options.tx != nil:
 		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).ListP2PMessagesByChat(ctx, arg.sqlcParams())
-	}
 
 	// Explicit primary reads bypass replicas.
-	if options.primary {
+	case options.primary:
 		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().ListP2PMessagesByChat(ctx, arg.sqlcParams())
-	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
-	return shard.Read().ListP2PMessagesByChat(ctx, arg.sqlcParams())
+	default:
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
+		return shard.Read().ListP2PMessagesByChat(ctx, arg.sqlcParams())
+	}
 }
