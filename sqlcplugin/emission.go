@@ -757,8 +757,9 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, query *generatedQuery) {
 	out.WriteString("\toptions := applyQueryOptions(storeOptions...)\n")
 	args := strings.Join(query.callArgs, ", ")
 	if query.kind == queryKindRead {
-		out.WriteString("\n\t// Transactional reads must use their transaction.\n")
-		out.WriteString("\tif options.tx != nil {\n")
+		out.WriteString("\n\tswitch {\n")
+		out.WriteString("\t// Transactional reads must use their transaction.\n")
+		out.WriteString("\tcase options.tx != nil:\n")
 		if traced {
 			out.WriteString("\t\tquerySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)\n")
 		}
@@ -768,21 +769,21 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, query *generatedQuery) {
 			query.methodName,
 			args,
 		)
-		out.WriteString("\t}\n")
 
 		out.WriteString("\n\t// Explicit primary reads bypass replicas.\n")
-		out.WriteString("\tif options.primary {\n")
+		out.WriteString("\tcase options.primary:\n")
 		if traced {
 			out.WriteString("\t\tquerySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)\n")
 		}
 		fmt.Fprintf(out, "\t\treturn shard.Write().%s(%s)\n", query.methodName, args)
-		out.WriteString("\t}\n")
 
 		out.WriteString("\n\t// Ordinary reads use the shard's replica route.\n")
+		out.WriteString("\tdefault:\n")
 		if traced {
-			out.WriteString("\tquerySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)\n")
+			out.WriteString("\t\tquerySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)\n")
 		}
-		fmt.Fprintf(out, "\treturn shard.Read().%s(%s)\n", query.methodName, args)
+		fmt.Fprintf(out, "\t\treturn shard.Read().%s(%s)\n", query.methodName, args)
+		out.WriteString("\t}\n")
 	} else {
 		out.WriteString("\n\t// Select the primary write route, or the transaction when provided.\n")
 		out.WriteString("\ttarget := shard.Write()\n")

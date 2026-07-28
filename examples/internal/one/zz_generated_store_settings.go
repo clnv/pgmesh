@@ -48,21 +48,22 @@ func (q *groupedMeshStore[SK]) GetSetting(ctx context.Context, key string, store
 	// Apply options that can override the default route.
 	options := applyQueryOptions(storeOptions...)
 
+	switch {
 	// Transactional reads must use their transaction.
-	if options.tx != nil {
+	case options.tx != nil:
 		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).GetSetting(ctx, key)
-	}
 
 	// Explicit primary reads bypass replicas.
-	if options.primary {
+	case options.primary:
 		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().GetSetting(ctx, key)
-	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
-	return shard.Read().GetSetting(ctx, key)
+	default:
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
+		return shard.Read().GetSetting(ctx, key)
+	}
 }
 
 // UpsertSetting executes the generated query on its target shard.
