@@ -40,20 +40,26 @@ func querySpecs(req *plugin.GenerateRequest, opts *options) ([]generatedQuery, *
 }
 
 type generatedQuery struct {
-	methodName  string
-	command     string
-	kind        queryKind
-	arg         queryValue
-	ret         queryValue
-	params      []argument
-	storeParams []argument
-	callArgs    []string
-	results     []string
-	route       *shardRoute
-	shardMode   shardMode
-	store       string
-	shardArgs   *shardArgWrapper
-	groupedMany *groupedManySpec
+	methodName      string
+	command         string
+	kind            queryKind
+	arg             queryValue
+	ret             queryValue
+	params          []argument
+	storeParams     []argument
+	callArgs        []string
+	results         []string
+	route           *shardRoute
+	shardMode       shardMode
+	store           string
+	storeParamAlias *storeParamAlias
+	shardArgs       *shardArgWrapper
+	groupedMany     *groupedManySpec
+}
+
+type storeParamAlias struct {
+	name   string
+	target string
 }
 
 type storeGroup struct {
@@ -88,12 +94,22 @@ type shardArgWrapper struct {
 }
 
 type groupedManySpec struct {
-	lookupDBName   string
-	lookupField    string
-	elementType    string
-	resultKeyField string
-	resultIsStruct bool
-	itemIsPointer  bool
+	parameterDBName string
+	parameterField  string
+	lookupDBName    string
+	lookupField     string
+	elementType     string
+	resultKeyField  string
+	resultIsStruct  bool
+	resultKeyAccess groupedManyResultKeyAccess
+	itemIsPointer   bool
+}
+
+type groupedManyResultKeyAccess struct {
+	nullable   bool
+	pointer    bool
+	valid      bool
+	valueField string
 }
 
 type shardMode uint8
@@ -178,6 +194,17 @@ func collectStoreGroups(queries []generatedQuery, opts *options) ([]storeGroup, 
 		}
 	}
 	for _, query := range queries {
+		if query.storeParamAlias != nil {
+			if previous, exists := declarations[query.storeParamAlias.name]; exists {
+				return nil, fmt.Errorf(
+					"query %s generates store parameter alias %s that conflicts with %s",
+					query.methodName,
+					query.storeParamAlias.name,
+					previous,
+				)
+			}
+			declarations[query.storeParamAlias.name] = "store parameter alias for " + query.methodName
+		}
 		if query.shardArgs == nil {
 			continue
 		}
@@ -533,6 +560,7 @@ func buildQueries(
 					query,
 					arg,
 					annotation,
+					groupedMany,
 					opts,
 					structs,
 					req.GetCatalog().GetDefaultSchema(),
@@ -550,25 +578,27 @@ func buildQueries(
 		}
 
 		out = append(out, generatedQuery{
-			methodName:  query.GetName(),
-			command:     query.GetCmd(),
-			kind:        kind,
-			arg:         arg,
-			ret:         ret,
-			params:      params,
-			storeParams: append([]argument(nil), params...),
-			callArgs:    argumentNames(params),
-			results:     results,
-			route:       route,
-			shardMode:   shardMode,
-			store:       store,
-			shardArgs:   nil,
-			groupedMany: groupedMany,
+			methodName:      query.GetName(),
+			command:         query.GetCmd(),
+			kind:            kind,
+			arg:             arg,
+			ret:             ret,
+			params:          params,
+			storeParams:     append([]argument(nil), params...),
+			callArgs:        argumentNames(params),
+			results:         results,
+			route:           route,
+			shardMode:       shardMode,
+			store:           store,
+			storeParamAlias: nil,
+			shardArgs:       nil,
+			groupedMany:     groupedMany,
 		})
 	}
 	if err := wrapQueriesWithExternalShardOperands(out, opts); err != nil {
 		return nil, err
 	}
+	aliasSQLCParamsForStore(out, opts)
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].methodName < out[j].methodName
 	})
@@ -609,7 +639,7 @@ func buildGroupedManySpec(
 		)
 	}
 
-	lookupField := structName(column.GetName(), opts)
+	parameterField := structName(column.GetName(), opts)
 	if arg.structType != nil {
 		if len(arg.structType.fields) != 1 {
 			return nil, fmt.Errorf(
@@ -618,10 +648,10 @@ func buildGroupedManySpec(
 				len(arg.structType.fields),
 			)
 		}
-		lookupField = arg.structType.fields[0].name
+		parameterField = arg.structType.fields[0].name
 	}
 
-	resultKeyField, resultIsStruct, err := groupedManyResultKey(
+	resultKeyField, lookupDBName, resultIsStruct, resultKeyAccess, err := groupedManyResultKey(
 		query.GetName(),
 		ret,
 		column.GetName(),
@@ -630,81 +660,185 @@ func buildGroupedManySpec(
 	if err != nil {
 		return nil, err
 	}
+	lookupField := structName(lookupDBName, opts)
+	if resultIsStruct {
+		lookupField = resultKeyField
+	}
 
 	return &groupedManySpec{
-		lookupDBName:   column.GetName(),
-		lookupField:    lookupField,
-		elementType:    elementType,
-		resultKeyField: resultKeyField,
-		resultIsStruct: resultIsStruct,
-		itemIsPointer:  false,
+		parameterDBName: column.GetName(),
+		parameterField:  parameterField,
+		lookupDBName:    lookupDBName,
+		lookupField:     lookupField,
+		elementType:     elementType,
+		resultKeyField:  resultKeyField,
+		resultIsStruct:  resultIsStruct,
+		resultKeyAccess: resultKeyAccess,
+		itemIsPointer:   false,
 	}, nil
 }
 
 func groupedManyResultKey(
 	queryName string,
 	ret queryValue,
-	lookupDBName string,
+	parameterDBName string,
 	elementType string,
-) (string, bool, error) {
+) (string, string, bool, groupedManyResultKeyAccess, error) {
+	lookupDBNames := []string{parameterDBName}
+	if singularName := singular(parameterDBName); singularName != parameterDBName {
+		lookupDBNames = append(lookupDBNames, singularName)
+	}
+
 	if ret.structType == nil {
-		if ret.dbName != lookupDBName {
-			return "", false, fmt.Errorf(
-				"query %s grouped :many result must expose lookup key %q; got scalar result %q",
+		for _, lookupDBName := range lookupDBNames {
+			if ret.dbName != lookupDBName {
+				continue
+			}
+			access, ok := groupedManyKeyAccess(ret.typ, elementType)
+			if !ok {
+				return "", "", false, groupedManyResultKeyAccess{}, fmt.Errorf(
+					"query %s grouped :many result key %q has Go type %s, want %s",
+					queryName,
+					lookupDBName,
+					ret.typ,
+					elementType,
+				)
+			}
+			return "", lookupDBName, false, access, nil
+		}
+		return "", "", false, groupedManyResultKeyAccess{}, fmt.Errorf(
+			"query %s grouped :many result must expose lookup key %s; got scalar result %q",
+			queryName,
+			groupedManyLookupDescription(lookupDBNames),
+			ret.dbName,
+		)
+	}
+
+	for _, lookupDBName := range lookupDBNames {
+		var matches []goField
+		for _, field := range ret.structType.fields {
+			if field.dbName == lookupDBName {
+				matches = append(matches, field)
+			}
+		}
+		switch len(matches) {
+		case 0:
+			continue
+		case 1:
+		default:
+			return "", "", false, groupedManyResultKeyAccess{}, fmt.Errorf(
+				"query %s grouped :many result exposes multiple fields for lookup key %q",
 				queryName,
 				lookupDBName,
-				ret.dbName,
 			)
 		}
-		if ret.typ != elementType {
-			return "", false, fmt.Errorf(
+		access, ok := groupedManyKeyAccess(matches[0].typ, elementType)
+		if !ok {
+			return "", "", false, groupedManyResultKeyAccess{}, fmt.Errorf(
 				"query %s grouped :many result key %q has Go type %s, want %s",
 				queryName,
 				lookupDBName,
-				ret.typ,
+				matches[0].typ,
 				elementType,
 			)
 		}
-		return "", false, nil
+		return matches[0].name, lookupDBName, true, access, nil
 	}
 
-	var matches []goField
-	for _, field := range ret.structType.fields {
-		if field.dbName == lookupDBName {
-			matches = append(matches, field)
-		}
+	return "", "", false, groupedManyResultKeyAccess{}, fmt.Errorf(
+		"query %s grouped :many result must expose exactly one field for lookup key %s",
+		queryName,
+		groupedManyLookupDescription(lookupDBNames),
+	)
+}
+
+func groupedManyKeyAccess(resultType, elementType string) (groupedManyResultKeyAccess, bool) {
+	if resultType == elementType {
+		return groupedManyResultKeyAccess{
+			nullable:   false,
+			pointer:    false,
+			valid:      false,
+			valueField: "",
+		}, true
 	}
-	switch len(matches) {
-	case 0:
-		return "", false, fmt.Errorf(
-			"query %s grouped :many result must expose exactly one field for lookup key %q",
-			queryName,
-			lookupDBName,
-		)
-	case 1:
-	default:
-		return "", false, fmt.Errorf(
-			"query %s grouped :many result exposes multiple fields for lookup key %q",
-			queryName,
-			lookupDBName,
-		)
+	if resultType == "*"+elementType {
+		return groupedManyResultKeyAccess{
+			nullable:   true,
+			pointer:    true,
+			valid:      false,
+			valueField: "",
+		}, true
 	}
-	if matches[0].typ != elementType {
-		return "", false, fmt.Errorf(
-			"query %s grouped :many result key %q has Go type %s, want %s",
-			queryName,
-			lookupDBName,
-			matches[0].typ,
-			elementType,
-		)
+
+	type nullableType struct {
+		elementType string
+		valueField  string
 	}
-	return matches[0].name, true, nil
+	nullableTypes := map[string]nullableType{
+		"pgtype.Int4":     {elementType: "int32", valueField: "Int32"},
+		"pgtype.Int8":     {elementType: goTypeInt64, valueField: "Int64"},
+		"pgtype.Int2":     {elementType: "int16", valueField: "Int16"},
+		"pgtype.Float8":   {elementType: "float64", valueField: "Float64"},
+		"pgtype.Float4":   {elementType: "float32", valueField: "Float32"},
+		"pgtype.Bool":     {elementType: goTypeBool, valueField: "Bool"},
+		"pgtype.Text":     {elementType: goTypeString, valueField: "String"},
+		"sql.NullBool":    {elementType: goTypeBool, valueField: "Bool"},
+		"sql.NullByte":    {elementType: "byte", valueField: "Byte"},
+		"sql.NullFloat64": {elementType: "float64", valueField: "Float64"},
+		"sql.NullInt16":   {elementType: "int16", valueField: "Int16"},
+		"sql.NullInt32":   {elementType: "int32", valueField: "Int32"},
+		"sql.NullInt64":   {elementType: goTypeInt64, valueField: "Int64"},
+		"sql.NullString":  {elementType: goTypeString, valueField: "String"},
+		"sql.NullTime":    {elementType: "time.Time", valueField: "Time"},
+	}
+	if nullable, ok := nullableTypes[resultType]; ok && nullable.elementType == elementType {
+		return groupedManyResultKeyAccess{
+			nullable:   true,
+			pointer:    false,
+			valid:      true,
+			valueField: nullable.valueField,
+		}, true
+	}
+
+	resultQualifier, resultName := splitTypeQualifier(resultType)
+	elementQualifier, elementName := splitTypeQualifier(elementType)
+	if resultQualifier == elementQualifier &&
+		resultName == "Null"+elementName &&
+		elementName != "" {
+		return groupedManyResultKeyAccess{
+			nullable:   true,
+			pointer:    false,
+			valid:      true,
+			valueField: elementName,
+		}, true
+	}
+	return groupedManyResultKeyAccess{
+		nullable:   false,
+		pointer:    false,
+		valid:      false,
+		valueField: "",
+	}, false
+}
+
+func splitTypeQualifier(typ string) (string, string) {
+	qualifier, name, ok := strings.Cut(typ, ".")
+	if !ok {
+		return "", typ
+	}
+	return qualifier, name
+}
+
+func groupedManyLookupDescription(lookupDBNames []string) string {
+	if len(lookupDBNames) == 1 {
+		return fmt.Sprintf("%q", lookupDBNames[0])
+	}
+	return fmt.Sprintf("%q or its singular form %q", lookupDBNames[0], lookupDBNames[1])
 }
 
 func scalarizeGroupedManyRoute(route *shardRoute, spec *groupedManySpec) {
 	for index := range route.operands {
 		operand := &route.operands[index]
-		if operand.dbName == spec.lookupDBName && !operand.external {
+		if operand.dbName == spec.parameterDBName && !operand.external {
 			operand.typ = spec.elementType
 		}
 	}
@@ -981,6 +1115,7 @@ func resolveShardRoute(
 	query *plugin.Query,
 	arg queryValue,
 	annotation *routeAnnotation,
+	groupedMany *groupedManySpec,
 	opts *options,
 	structs []goStruct,
 	defaultSchema string,
@@ -1003,6 +1138,13 @@ func resolveShardRoute(
 	seenNames := make(map[string]struct{}, len(annotation.operands))
 	for _, dbName := range annotation.operands {
 		operand, ok := routeOperandForArg(arg, dbName, opts)
+		if !ok && groupedMany != nil && dbName == groupedMany.lookupDBName {
+			operand, ok = routeOperandForArg(arg, groupedMany.parameterDBName, opts)
+			if ok {
+				operand.name = escape(lowerTitle(groupedMany.lookupField))
+				operand.fieldName = groupedMany.lookupField
+			}
+		}
 		if !ok {
 			field, err := routeOperandFieldFromModels(query, dbName, structs, defaultSchema)
 			if err != nil {
@@ -1232,10 +1374,42 @@ func wrapQueriesWithExternalShardOperands(queries []generatedQuery, opts *option
 	return nil
 }
 
+func aliasSQLCParamsForStore(queries []generatedQuery, opts *options) {
+	for index := range queries {
+		query := &queries[index]
+		if query.store == "" ||
+			query.shardArgs != nil ||
+			!query.arg.emit ||
+			query.arg.structType == nil {
+			continue
+		}
+
+		sqlcType := targetName(opts, query.arg.structType.name)
+		aliasName := query.methodName + "T"
+		replaced := false
+		for paramIndex := range query.storeParams {
+			param := &query.storeParams[paramIndex]
+			typ := strings.ReplaceAll(param.typ, sqlcType, aliasName)
+			if typ == param.typ {
+				continue
+			}
+			param.typ = typ
+			replaced = true
+		}
+		if !replaced {
+			continue
+		}
+		query.storeParamAlias = &storeParamAlias{
+			name:   aliasName,
+			target: exportedSQLCType(opts, sqlcType),
+		}
+	}
+}
+
 func wrapGroupedManyShardOperands(query *generatedQuery, opts *options) error {
 	spec := query.groupedMany
 	wrapper := &shardArgWrapper{
-		name:    query.methodName + "ShardParams",
+		name:    query.methodName + "T",
 		fields:  nil,
 		sqlcArg: queryValue{},
 	}
@@ -1258,13 +1432,13 @@ func wrapGroupedManyShardOperands(query *generatedQuery, opts *options) error {
 	if err := appendField(
 		spec.lookupField,
 		spec.elementType,
-		"SQL list parameter "+spec.lookupDBName,
+		"SQL list parameter "+spec.parameterDBName,
 	); err != nil {
 		return err
 	}
 	for operandIndex := range query.route.operands {
 		operand := &query.route.operands[operandIndex]
-		if operand.dbName == spec.lookupDBName && !operand.external {
+		if operand.dbName == spec.parameterDBName && !operand.external {
 			operand.expression = "arg." + spec.lookupField
 			continue
 		}
@@ -1300,7 +1474,7 @@ func wrapGroupedManyShardOperands(query *generatedQuery, opts *options) error {
 
 func wrapExternalShardOperands(query *generatedQuery, opts *options) error {
 	wrapper := &shardArgWrapper{
-		name:    query.methodName + "ShardParams",
+		name:    query.methodName + "T",
 		fields:  nil,
 		sqlcArg: queryValue{},
 	}
@@ -1483,7 +1657,7 @@ func resultTypes(query *plugin.Query, ret queryValue, opts *options) ([]string, 
 	case cmdExec:
 		return []string{resultErrorName}, nil
 	case cmdExecRows, cmdCopyFrom:
-		return []string{"int64", resultErrorName}, nil
+		return []string{goTypeInt64, resultErrorName}, nil
 	case ":execresult":
 		return []string{"pgconn.CommandTag", resultErrorName}, nil
 	case ":batchexec", ":batchone", ":batchmany":

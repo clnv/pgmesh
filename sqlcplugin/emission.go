@@ -204,6 +204,7 @@ func writeQueryInterfaces(
 }
 
 func writeStoreGroup(out *bytes.Buffer, opts *options, group *storeGroup) {
+	writeStoreParamAliases(out, group.queries)
 	writeShardArgWrappers(out, opts, group.queries)
 	writeStoreGroupInterfaces(out, opts, group)
 
@@ -272,6 +273,17 @@ func writeStoreInterfaceMethod(out *bytes.Buffer, opts *options, query *generate
 	)
 }
 
+func writeStoreParamAliases(out *bytes.Buffer, queries []generatedQuery) {
+	for _, query := range queries {
+		if query.storeParamAlias == nil {
+			continue
+		}
+		alias := query.storeParamAlias
+		fmt.Fprintf(out, "// %s is the store parameter type for %s.\n", alias.name, query.methodName)
+		fmt.Fprintf(out, "type %s = %s\n\n", alias.name, alias.target)
+	}
+}
+
 func writeShardArgWrappers(out *bytes.Buffer, opts *options, queries []generatedQuery) {
 	for _, query := range queries {
 		if query.shardArgs == nil {
@@ -279,7 +291,7 @@ func writeShardArgWrappers(out *bytes.Buffer, opts *options, queries []generated
 		}
 		fmt.Fprintf(
 			out,
-			"// %s combines sqlc and routing-only shard parameters for %s.\n",
+			"// %s combines SQL and routing parameters for %s.\n",
 			query.shardArgs.name,
 			query.methodName,
 		)
@@ -826,10 +838,15 @@ func writeGroupedManyQueryMethod(
 		defaultReceiverName,
 		"storeOptions",
 	)
+	methodDescription := "groups lookup values by physical shard and restores input-key result order"
+	if spec.resultKeyAccess.nullable {
+		methodDescription += "; rows with NULL lookup keys are appended"
+	}
 	fmt.Fprintf(
 		out,
-		"// %s groups lookup values by physical shard and restores input-key result order.\n",
+		"// %s %s.\n",
 		query.methodName,
+		methodDescription,
 	)
 	fmt.Fprintf(
 		out,
@@ -899,7 +916,7 @@ func writeGroupedManyQueryMethod(
 	routeArgs := make([]string, 0, len(query.route.operands))
 	for _, operand := range query.route.operands {
 		expression := strings.Replace(operand.expression, "arg.", "item.", 1)
-		if operand.dbName == spec.lookupDBName && !operand.external {
+		if operand.dbName == spec.parameterDBName && !operand.external {
 			expression = lookupExpression
 		}
 		routeArgs = append(routeArgs, expression)
@@ -1018,6 +1035,9 @@ func writeGroupedManyQueryMethod(
 
 	rowType := strings.TrimPrefix(query.results[0], "[]")
 	fmt.Fprintf(out, "\trowsByGroup := make(map[string]map[any][]%s, len(groups))\n", rowType)
+	if spec.resultKeyAccess.nullable {
+		fmt.Fprintf(out, "\tunkeyedRows := make([]%s, 0)\n", rowType)
+	}
 	out.WriteString("\tfor groupIndex, groupResult := range groupResults {\n")
 	fmt.Fprintf(out, "\t\trowsByKey := make(map[any][]%s)\n", rowType)
 	out.WriteString("\t\trowsByGroup[groups[groupIndex].shard.Name()] = rowsByKey\n")
@@ -1035,6 +1055,24 @@ func writeGroupedManyQueryMethod(
 	resultKeyExpression := "row"
 	if spec.resultIsStruct {
 		resultKeyExpression = "row." + spec.resultKeyField
+	}
+	if spec.resultKeyAccess.nullable {
+		fmt.Fprintf(out, "\t\t\tresultLookupValue := %s\n", resultKeyExpression)
+		switch {
+		case spec.resultKeyAccess.pointer:
+			out.WriteString("\t\t\tif resultLookupValue == nil {\n")
+		case spec.resultKeyAccess.valid:
+			out.WriteString("\t\t\tif !resultLookupValue.Valid {\n")
+		}
+		out.WriteString("\t\t\t\tunkeyedRows = append(unkeyedRows, row)\n")
+		out.WriteString("\t\t\t\tcontinue\n")
+		out.WriteString("\t\t\t}\n")
+		resultKeyExpression = "resultLookupValue"
+		if spec.resultKeyAccess.pointer {
+			resultKeyExpression = "*" + resultKeyExpression
+		} else if spec.resultKeyAccess.valueField != "" {
+			resultKeyExpression += "." + spec.resultKeyAccess.valueField
+		}
 	}
 	fmt.Fprintf(out, "\t\t\tresultKey := any(%s)\n", resultKeyExpression)
 	out.WriteString("\t\t\tif resultKey != nil && !reflect.ValueOf(resultKey).Comparable() {\n")
@@ -1066,6 +1104,14 @@ func writeGroupedManyQueryMethod(
 		resultNames[0],
 	)
 	out.WriteString("\t}\n")
+	if spec.resultKeyAccess.nullable {
+		fmt.Fprintf(
+			out,
+			"\t%s = append(%s, unkeyedRows...)\n",
+			resultNames[0],
+			resultNames[0],
+		)
+	}
 	fmt.Fprintf(out, "\treturn %s\n", strings.Join(resultNames, ", "))
 	out.WriteString("}\n\n")
 }
@@ -1082,7 +1128,7 @@ func groupedManySQLCArgument(opts *options, query *generatedQuery, groupedArgs s
 		"%s%s{%s: %s}",
 		prefix,
 		targetName(opts, query.arg.structType.name),
-		query.groupedMany.lookupField,
+		query.groupedMany.parameterField,
 		groupedArgs,
 	)
 }
