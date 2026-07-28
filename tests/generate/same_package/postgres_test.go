@@ -240,6 +240,55 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 			},
 		},
 		{
+			name: "grouped copy sends one physical batch per shard",
+			run: func(t *testing.T, h *postgresCase) {
+				count, err := h.queries.Users().CopyUsers(t.Context(), []*fixture.CopyUsersParams{
+					{ID: 250, TenantID: 2, Name: "even-two"},
+					{ID: 251, TenantID: 3, Name: "odd"},
+					{ID: 252, TenantID: 4, Name: "even-four"},
+				})
+				require.NoError(t, err)
+				assert.Equal(t, int64(3), count)
+
+				assert.Equal(t, "even-two", h.userName(t, "shard0-primary", 250, 2))
+				assert.Equal(t, "even-four", h.userName(t, "shard0-primary", 252, 4))
+				assert.Equal(t, "even-two", h.userName(t, "shard0-mirror", 250, 2))
+				assert.Equal(t, "even-four", h.userName(t, "shard0-mirror", 252, 4))
+				assert.Equal(t, "odd", h.userName(t, "shard1-primary", 251, 3))
+				h.assertUserAbsent(t, "shard1-primary", 250, 2)
+				h.assertUserAbsent(t, "shard0-primary", 251, 3)
+			},
+		},
+		{
+			name: "all-shards reads merge and writes affect every physical shard",
+			run: func(t *testing.T, h *postgresCase) {
+				h.insert(t, "shard0-primary", 260, 2, "scatter")
+				h.insert(t, "shard0-mirror", 260, 2, "scatter")
+				h.insert(t, "shard1-primary", 261, 3, "scatter")
+
+				users, err := h.queries.Users().ListAllUsers(
+					t.Context(),
+					fixture.ReadFromPrimary(),
+				)
+				require.NoError(t, err)
+				require.Len(t, users, 2)
+				assert.Equal(t, []int64{260, 261}, []int64{users[0].ID, users[1].ID})
+
+				count, err := h.queries.Users().DeleteAllUsersByName(t.Context(), "scatter")
+				require.NoError(t, err)
+				assert.Equal(t, int64(2), count)
+				h.assertUserAbsent(t, "shard0-primary", 260, 2)
+				h.assertUserAbsent(t, "shard0-mirror", 260, 2)
+				h.assertUserAbsent(t, "shard1-primary", 261, 3)
+
+				tx, err := h.pools["shard0-primary"].Begin(t.Context())
+				require.NoError(t, err)
+				defer func() { _ = tx.Rollback(context.Background()) }()
+				err = h.queries.Users().DeleteAllUsers(t.Context(), fixture.WithTx(tx))
+				require.ErrorIs(t, err, pgmesh.ErrCrossShardTransaction)
+			},
+		},
+		{
 			name: "mirror error preserves committed primary result",
 			run: func(t *testing.T, h *postgresCase) {
 				h.insert(t, "shard0-mirror", 300, 2, "existing")
@@ -328,6 +377,16 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 				)
 				require.NoError(t, err)
 				assert.Equal(t, "transactional", created.Name)
+				copyCount, err := h.queries.Users().CopyUsers(
+					t.Context(),
+					[]*fixture.CopyUsersParams{
+						{ID: 401, TenantID: 2, Name: "copy-two"},
+						{ID: 402, TenantID: 4, Name: "copy-four"},
+					},
+					fixture.WithTx(tx),
+				)
+				require.NoError(t, err)
+				assert.Equal(t, int64(2), copyCount)
 				inside, err := h.queries.Users().GetUser(
 					t.Context(),
 					&fixture.GetUserParams{ID: 400, TenantID: 2},
@@ -338,7 +397,11 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 				require.NoError(t, tx.Commit(t.Context()))
 
 				assert.Equal(t, "transactional", h.userName(t, "shard0-primary", 400, 2))
+				assert.Equal(t, "copy-two", h.userName(t, "shard0-primary", 401, 2))
+				assert.Equal(t, "copy-four", h.userName(t, "shard0-primary", 402, 4))
 				h.assertUserAbsent(t, "shard0-mirror", 400, 2)
+				h.assertUserAbsent(t, "shard0-mirror", 401, 2)
+				h.assertUserAbsent(t, "shard0-mirror", 402, 4)
 			},
 		},
 	}

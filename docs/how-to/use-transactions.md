@@ -73,6 +73,10 @@ the primary. It takes precedence over normal replica selection.
   selected from the query arguments. Begin it from the matching primary pool.
 - All queries in one transaction must resolve to the same physical shard.
 - pgmesh does not coordinate cross-shard transactions.
+- `shard: all()` always rejects `WithTx` with
+  `pgmesh.ErrCrossShardTransaction`.
+- Routed `:copyfrom` accepts `WithTx` only when every input row groups to one
+  physical shard; it rejects the call before copying otherwise.
 - Transaction-bound generated calls do not fan writes out to mirrors.
 - Always commit or roll back using normal pgx transaction handling.
 

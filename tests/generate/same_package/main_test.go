@@ -43,19 +43,33 @@ func (l *callLog) snapshot() []string {
 }
 
 type fakeDB struct {
-	name   string
-	log    *callLog
-	rowErr error
+	name         string
+	log          *callLog
+	rowErr       error
+	queryErr     error
+	execErr      error
+	copyErr      error
+	rowsAffected int64
+	users        []*User
+
+	mu         sync.Mutex
+	copiedRows [][]any
 }
 
 func (db *fakeDB) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
 	db.log.add(db.name)
-	return pgconn.CommandTag{}, nil
+	return pgconn.NewCommandTag(fmt.Sprintf("DELETE %d", db.rowsAffected)), db.execErr
 }
 
 func (db *fakeDB) Query(context.Context, string, ...any) (pgx.Rows, error) {
 	db.log.add(db.name)
-	return nil, errors.New("fake rows are not configured")
+	if db.queryErr != nil {
+		return nil, db.queryErr
+	}
+	if db.users == nil {
+		return nil, errors.New("fake rows are not configured")
+	}
+	return &fakeRows{users: db.users}, nil
 }
 
 func (db *fakeDB) QueryRow(context.Context, string, ...any) pgx.Row {
@@ -63,9 +77,41 @@ func (db *fakeDB) QueryRow(context.Context, string, ...any) pgx.Row {
 	return fakeRow{err: db.rowErr}
 }
 
-func (db *fakeDB) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+func (db *fakeDB) CopyFrom(
+	_ context.Context,
+	_ pgx.Identifier,
+	_ []string,
+	source pgx.CopyFromSource,
+) (int64, error) {
 	db.log.add(db.name)
-	return 1, nil
+	if db.copyErr != nil {
+		return 0, db.copyErr
+	}
+	var count int64
+	for source.Next() {
+		values, err := source.Values()
+		if err != nil {
+			return 0, err
+		}
+		db.mu.Lock()
+		db.copiedRows = append(db.copiedRows, append([]any(nil), values...))
+		db.mu.Unlock()
+		count++
+	}
+	if err := source.Err(); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (db *fakeDB) copied() [][]any {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	rows := make([][]any, len(db.copiedRows))
+	for index := range db.copiedRows {
+		rows[index] = append([]any(nil), db.copiedRows[index]...)
+	}
+	return rows
 }
 
 type fakeRow struct {
@@ -93,6 +139,79 @@ func (r fakeRow) Scan(dest ...any) error {
 		*tenantID = 20
 		*name = "user"
 	}
+	return nil
+}
+
+type fakeRows struct {
+	users  []*User
+	index  int
+	closed bool
+}
+
+func (r *fakeRows) Close() {
+	r.closed = true
+}
+
+func (r *fakeRows) Err() error {
+	return nil
+}
+
+func (r *fakeRows) CommandTag() pgconn.CommandTag {
+	return pgconn.CommandTag{}
+}
+
+func (r *fakeRows) FieldDescriptions() []pgconn.FieldDescription {
+	return nil
+}
+
+func (r *fakeRows) Next() bool {
+	if r.index >= len(r.users) {
+		r.Close()
+		return false
+	}
+	r.index++
+	return true
+}
+
+func (r *fakeRows) Scan(dest ...any) error {
+	if r.index == 0 || r.index > len(r.users) {
+		return errors.New("fake rows scan called without current row")
+	}
+	user := r.users[r.index-1]
+	if len(dest) != 3 {
+		return fmt.Errorf("got %d destinations, want 3", len(dest))
+	}
+	id, ok := dest[0].(*int64)
+	if !ok {
+		return fmt.Errorf("destination 0 has type %T, want *int64", dest[0])
+	}
+	tenantID, ok := dest[1].(*int64)
+	if !ok {
+		return fmt.Errorf("destination 1 has type %T, want *int64", dest[1])
+	}
+	name, ok := dest[2].(*string)
+	if !ok {
+		return fmt.Errorf("destination 2 has type %T, want *string", dest[2])
+	}
+	*id = user.ID
+	*tenantID = user.TenantID
+	*name = user.Name
+	return nil
+}
+
+func (r *fakeRows) Values() ([]any, error) {
+	if r.index == 0 || r.index > len(r.users) {
+		return nil, errors.New("fake rows values called without current row")
+	}
+	user := r.users[r.index-1]
+	return []any{user.ID, user.TenantID, user.Name}, nil
+}
+
+func (r *fakeRows) RawValues() [][]byte {
+	return nil
+}
+
+func (r *fakeRows) Conn() *pgx.Conn {
 	return nil
 }
 
@@ -136,6 +255,22 @@ func (tenantResolver) Tenant(int64) uint64 {
 
 func (tenantResolver) Messagekey(int64, int64, bool) uint64 {
 	return 0
+}
+
+type identityTenantResolver struct{}
+
+func (identityTenantResolver) Tenant(tenantID int64) uint64 {
+	return uint64(tenantID) //nolint:gosec // Test fixtures use nonnegative IDs.
+}
+
+func (identityTenantResolver) Messagekey(userID, _ int64, _ bool) uint64 {
+	return uint64(userID) //nolint:gosec // Test fixtures use nonnegative IDs.
+}
+
+type identityShardHasher struct{}
+
+func (identityShardHasher) Hash(key uint64) uint64 {
+	return key
 }
 
 type recordingTenantResolver struct {
@@ -196,6 +331,317 @@ func buildTestStore(t *testing.T, primary, replica *fakeDB, mirrors ...*fakeDB) 
 	)
 	require.NoError(t, err)
 	return store
+}
+
+func buildTwoShardStore(
+	t *testing.T,
+	hasher pgmesh.ShardHasher[uint64],
+	shardBPrimary *fakeDB,
+	shardBReplica *fakeDB,
+	shardAPrimary *fakeDB,
+	shardAReplica *fakeDB,
+	shardBMirror *fakeDB,
+) Store {
+	t.Helper()
+
+	shardBReplicas := []DBTX(nil)
+	if shardBReplica != nil {
+		shardBReplicas = append(shardBReplicas, shardBReplica)
+	}
+	shardAReplicas := []DBTX(nil)
+	if shardAReplica != nil {
+		shardAReplicas = append(shardAReplicas, shardAReplica)
+	}
+	options := []ShardedOption{
+		WithReplicaSet("shard-b", shardBPrimary, shardBReplicas...),
+		WithReplicaSet("shard-a", shardAPrimary, shardAReplicas...),
+	}
+	mirrors := []string(nil)
+	if shardBMirror != nil {
+		options = append(options, WithReplicaSet("shard-b-mirror", shardBMirror))
+		mirrors = append(mirrors, "shard-b-mirror")
+	}
+	options = append(
+		options,
+		WithVShardMapping("shard-b", []uint64{0, 2}, mirrors...),
+		WithVShardMapping("shard-a", []uint64{1, 3}),
+	)
+	store, err := NewStore(
+		t.Context(),
+		Sharded(4, hasher, identityTenantResolver{}, options...),
+	)
+	require.NoError(t, err)
+	return store
+}
+
+func TestGeneratedAllShardsReadMergesInPhysicalOrder(t *testing.T) {
+	t.Parallel()
+
+	log := &callLog{}
+	store := buildTwoShardStore(
+		t,
+		pgmesh.ModularShardHashFor[uint64](4),
+		&fakeDB{name: "shard-b-primary", log: log, users: []*User{{ID: 200}}},
+		&fakeDB{name: "shard-b-replica", log: log, users: []*User{{ID: 20}}},
+		&fakeDB{name: "shard-a-primary", log: log, users: []*User{{ID: 100}}},
+		&fakeDB{name: "shard-a-replica", log: log, users: []*User{{ID: 10}}},
+		nil,
+	)
+
+	users, err := store.Users().ListAllUsers(t.Context())
+	require.NoError(t, err)
+	require.Len(t, users, 2)
+	assert.Equal(t, []int64{20, 10}, []int64{users[0].ID, users[1].ID})
+	assert.ElementsMatch(t, []string{"shard-b-replica", "shard-a-replica"}, log.snapshot())
+
+	primaryUsers, err := store.Users().ListAllUsers(t.Context(), ReadFromPrimary())
+	require.NoError(t, err)
+	require.Len(t, primaryUsers, 2)
+	assert.Equal(t, []int64{200, 100}, []int64{primaryUsers[0].ID, primaryUsers[1].ID})
+	assert.ElementsMatch(
+		t,
+		[]string{"shard-b-primary", "shard-a-primary"},
+		log.snapshot()[2:],
+	)
+}
+
+func TestGeneratedAllShardsAttemptsEveryTargetAndZerosFailures(t *testing.T) {
+	t.Parallel()
+
+	log := &callLog{}
+	queryErr := errors.New("shard-b unavailable")
+	store := buildTwoShardStore(
+		t,
+		pgmesh.ModularShardHashFor[uint64](4),
+		&fakeDB{name: "shard-b-primary", log: log},
+		&fakeDB{name: "shard-b-replica", log: log, queryErr: queryErr},
+		&fakeDB{name: "shard-a-primary", log: log},
+		&fakeDB{name: "shard-a-replica", log: log, users: []*User{{ID: 10}}},
+		nil,
+	)
+
+	users, err := store.Users().ListAllUsers(t.Context())
+	require.ErrorIs(t, err, queryErr)
+	assert.Nil(t, users)
+	require.ErrorContains(t, err, `replica set "shard-b"`)
+	assert.ElementsMatch(t, []string{"shard-b-replica", "shard-a-replica"}, log.snapshot())
+}
+
+func TestGeneratedAllShardsWritesSumRowsAndRejectTransactions(t *testing.T) {
+	t.Parallel()
+
+	log := &callLog{}
+	shardB := &fakeDB{name: "shard-b-primary", log: log, rowsAffected: 2}
+	shardA := &fakeDB{name: "shard-a-primary", log: log, rowsAffected: 3}
+	mirror := &fakeDB{name: "shard-b-mirror", log: log, rowsAffected: 2}
+	store := buildTwoShardStore(
+		t,
+		pgmesh.ModularShardHashFor[uint64](4),
+		shardB,
+		nil,
+		shardA,
+		nil,
+		mirror,
+	)
+
+	count, err := store.Users().DeleteAllUsersByName(t.Context(), "obsolete")
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), count)
+	assert.ElementsMatch(
+		t,
+		[]string{"shard-b-primary", "shard-b-mirror", "shard-a-primary"},
+		log.snapshot(),
+	)
+
+	writeErr := errors.New("shard-b write failed")
+	shardB.execErr = writeErr
+	before := len(log.snapshot())
+	count, err = store.Users().DeleteAllUsersByName(t.Context(), "obsolete")
+	require.ErrorIs(t, err, writeErr)
+	require.ErrorContains(t, err, `replica set "shard-b"`)
+	assert.Zero(t, count)
+	assert.ElementsMatch(
+		t,
+		[]string{"shard-b-primary", "shard-a-primary"},
+		log.snapshot()[before:],
+	)
+
+	before = len(log.snapshot())
+	err = store.Users().DeleteAllUsers(t.Context(), WithTx(&fakeTx{fakeDB: &fakeDB{
+		name: "tx",
+		log:  log,
+	}}))
+	require.ErrorIs(t, err, pgmesh.ErrCrossShardTransaction)
+	assert.Len(t, log.snapshot(), before)
+}
+
+func TestGeneratedGroupedCopyPartitionsByPhysicalShard(t *testing.T) {
+	t.Parallel()
+
+	log := &callLog{}
+	shardB := &fakeDB{name: "shard-b-primary", log: log}
+	shardA := &fakeDB{name: "shard-a-primary", log: log}
+	mirror := &fakeDB{name: "shard-b-mirror", log: log}
+	store := buildTwoShardStore(
+		t,
+		pgmesh.ModularShardHashFor[uint64](4),
+		shardB,
+		nil,
+		shardA,
+		nil,
+		mirror,
+	)
+
+	count, err := store.Users().CopyUsers(t.Context(), []*CopyUsersParams{
+		{ID: 10, TenantID: 0, Name: "b0"},
+		{ID: 11, TenantID: 1, Name: "a1"},
+		{ID: 12, TenantID: 2, Name: "b2"},
+		{ID: 13, TenantID: 3, Name: "a3"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), count)
+	assert.ElementsMatch(
+		t,
+		[]string{"shard-b-primary", "shard-b-mirror", "shard-a-primary"},
+		log.snapshot(),
+	)
+	assert.Equal(t, [][]any{
+		{int64(10), int64(0), "b0"},
+		{int64(12), int64(2), "b2"},
+	}, shardB.copied())
+	assert.Equal(t, shardB.copied(), mirror.copied())
+	assert.Equal(t, [][]any{
+		{int64(11), int64(1), "a1"},
+		{int64(13), int64(3), "a3"},
+	}, shardA.copied())
+}
+
+func TestGeneratedGroupedCopyPreflightsRoutesAndTransactions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("routing failure dispatches nothing", func(t *testing.T) {
+		t.Parallel()
+
+		log := &callLog{}
+		store := buildTwoShardStore(
+			t,
+			identityShardHasher{},
+			&fakeDB{name: "shard-b-primary", log: log},
+			nil,
+			&fakeDB{name: "shard-a-primary", log: log},
+			nil,
+			nil,
+		)
+
+		count, err := store.Users().CopyUsers(t.Context(), []*CopyUsersParams{
+			{ID: 10, TenantID: 0},
+			{ID: 11, TenantID: 4},
+		})
+		require.ErrorIs(t, err, pgmesh.ErrVShardOutOfRange)
+		require.ErrorContains(t, err, "input 1")
+		assert.Zero(t, count)
+		assert.Empty(t, log.snapshot())
+	})
+
+	t.Run("multi-shard transaction dispatches nothing", func(t *testing.T) {
+		t.Parallel()
+
+		log := &callLog{}
+		store := buildTwoShardStore(
+			t,
+			pgmesh.ModularShardHashFor[uint64](4),
+			&fakeDB{name: "shard-b-primary", log: log},
+			nil,
+			&fakeDB{name: "shard-a-primary", log: log},
+			nil,
+			nil,
+		)
+		tx := &fakeTx{fakeDB: &fakeDB{name: "tx", log: log}}
+
+		count, err := store.Users().CopyUsers(
+			t.Context(),
+			[]*CopyUsersParams{{ID: 10, TenantID: 0}, {ID: 11, TenantID: 1}},
+			WithTx(tx),
+		)
+		require.ErrorIs(t, err, pgmesh.ErrCrossShardTransaction)
+		assert.Zero(t, count)
+		assert.Empty(t, log.snapshot())
+	})
+
+	t.Run("one physical shard uses transaction", func(t *testing.T) {
+		t.Parallel()
+
+		log := &callLog{}
+		primary := &fakeDB{name: "shard-b-primary", log: log}
+		mirror := &fakeDB{name: "shard-b-mirror", log: log}
+		store := buildTwoShardStore(
+			t,
+			pgmesh.ModularShardHashFor[uint64](4),
+			primary,
+			nil,
+			&fakeDB{name: "shard-a-primary", log: log},
+			nil,
+			mirror,
+		)
+		txDB := &fakeDB{name: "tx", log: log}
+
+		count, err := store.Users().CopyUsers(
+			t.Context(),
+			[]*CopyUsersParams{{ID: 10, TenantID: 0}, {ID: 12, TenantID: 2}},
+			WithTx(&fakeTx{fakeDB: txDB}),
+		)
+		require.NoError(t, err)
+		assert.Equal(t, int64(2), count)
+		assert.Equal(t, []string{"tx"}, log.snapshot())
+		assert.Len(t, txDB.copied(), 2)
+		assert.Empty(t, primary.copied())
+		assert.Empty(t, mirror.copied())
+	})
+
+	t.Run("empty input is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		log := &callLog{}
+		store := buildTwoShardStore(
+			t,
+			pgmesh.ModularShardHashFor[uint64](4),
+			&fakeDB{name: "shard-b-primary", log: log},
+			nil,
+			&fakeDB{name: "shard-a-primary", log: log},
+			nil,
+			nil,
+		)
+
+		count, err := store.Users().CopyUsers(t.Context(), nil)
+		require.NoError(t, err)
+		assert.Zero(t, count)
+		assert.Empty(t, log.snapshot())
+	})
+}
+
+func TestGeneratedGroupedCopyAttemptsEveryGroupAndZerosFailures(t *testing.T) {
+	t.Parallel()
+
+	log := &callLog{}
+	copyErr := errors.New("shard-b copy failed")
+	store := buildTwoShardStore(
+		t,
+		pgmesh.ModularShardHashFor[uint64](4),
+		&fakeDB{name: "shard-b-primary", log: log, copyErr: copyErr},
+		nil,
+		&fakeDB{name: "shard-a-primary", log: log},
+		nil,
+		nil,
+	)
+
+	count, err := store.Users().CopyUsers(t.Context(), []*CopyUsersParams{
+		{ID: 10, TenantID: 0},
+		{ID: 11, TenantID: 1},
+	})
+	require.ErrorIs(t, err, copyErr)
+	require.ErrorContains(t, err, `replica set "shard-b"`)
+	assert.Zero(t, count)
+	assert.ElementsMatch(t, []string{"shard-b-primary", "shard-a-primary"}, log.snapshot())
 }
 
 func TestGeneratedRoutingOnlyShardArgument(t *testing.T) {
@@ -363,27 +809,27 @@ func TestGeneratedStoreTelemetryWiring(t *testing.T) {
 	require.NotNil(t, user)
 
 	type spanExpectation struct {
-		query       string
-		kind        string
-		mode        string
-		mirrorCount int64
-		status      codes.Code
+		query  string
+		kind   string
+		mode   string
+		status codes.Code
 	}
 	expectedSpans := []spanExpectation{
 		{query: "GetUser", kind: "read", mode: "read"},
 		{query: "GetUser", kind: "read", mode: "primary"},
 		{query: "GetUser", kind: "read", mode: "transaction"},
-		{query: "CreateUser", kind: "write", mode: "primary", mirrorCount: 1, status: codes.Error},
+		{query: "CreateUser", kind: "write", mode: "primary", status: codes.Error},
 	}
 	spans := recorder.Ended()
 	require.Len(t, spans, len(expectedSpans))
 	for index, expected := range expectedSpans {
+		assert.Equal(t, "pgmesh.query.Users."+expected.query, spans[index].Name())
 		attributes := telemetryAttributeMap(spans[index].Attributes())
 		assert.Equal(t, expected.query, attributes[pgmesh.AttributeQueryName].AsString())
 		assert.Equal(t, expected.kind, attributes[pgmesh.AttributeQueryKind].AsString())
 		assert.Equal(t, "main", attributes[pgmesh.AttributeReplicaSet].AsString())
 		assert.Equal(t, expected.mode, attributes[pgmesh.AttributeRouteMode].AsString())
-		assert.Equal(t, expected.mirrorCount, attributes[pgmesh.AttributeWriteMirrorCount].AsInt64())
+		assert.NotContains(t, attributes, attribute.Key("pgmesh.route.write_mirror_count"))
 		assert.Equal(t, expected.status, spans[index].Status().Code)
 	}
 
@@ -407,9 +853,7 @@ func TestGeneratedStoreTelemetryWiring(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(line), &record))
 		assert.Equal(t, expectedSpans[index].query, record["query_name"])
 		assert.Equal(t, expectedSpans[index].mode, record["route_mode"])
-		mirrorCount, ok := record["write_mirror_count"].(float64)
-		require.True(t, ok)
-		assert.InDelta(t, expectedSpans[index].mirrorCount, mirrorCount, 0)
+		assert.NotContains(t, record, "write_mirror_count")
 		assert.Equal(t, expectedSpans[index].status == codes.Error, record["failed"])
 	}
 }

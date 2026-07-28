@@ -29,4 +29,7 @@ var (
 	ErrNilReplicaSet = errors.New("pgmesh: replica set must not be nil")
 	// ErrMirrorConfiguration indicates that write-mirror mappings are inconsistent.
 	ErrMirrorConfiguration = errors.New("pgmesh: inconsistent mirror configuration")
+	// ErrCrossShardTransaction indicates that one transaction was supplied for
+	// an operation targeting more than one physical shard.
+	ErrCrossShardTransaction = errors.New("pgmesh: transaction cannot span physical shards")
 )

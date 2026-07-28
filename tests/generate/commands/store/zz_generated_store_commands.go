@@ -116,7 +116,7 @@ func (q *groupedMeshStore[SK]) BatchListCommandUsersByTenant(ctx context.Context
 // CopyCommandUsers executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) CopyCommandUsers(ctx context.Context, arg []*db.CopyCommandUsersParams, storeOptions ...QueryOption) (result int64, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "CopyCommandUsers", pgmesh.QueryKindWrite)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Commands", "CopyCommandUsers", pgmesh.QueryKindWrite)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -132,22 +132,20 @@ func (q *groupedMeshStore[SK]) CopyCommandUsers(ctx context.Context, arg []*db.C
 	// Select the primary write route, or the transaction when provided.
 	target := shard.Write()
 	mode := pgmesh.RouteModePrimary
-	writeMirrorCount := shard.WriteMirrorCount()
 	if options.tx != nil {
 		target = target.WithTx(options.tx)
 		mode = pgmesh.RouteModeTransaction
-		writeMirrorCount = 0
 	}
 
 	// Execute the write after recording its resolved route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode)
 	return target.CopyCommandUsers(ctx, arg)
 }
 
 // DeleteCommandUser executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) DeleteCommandUser(ctx context.Context, id int64, storeOptions ...QueryOption) (err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "DeleteCommandUser", pgmesh.QueryKindWrite)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Commands", "DeleteCommandUser", pgmesh.QueryKindWrite)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -163,22 +161,20 @@ func (q *groupedMeshStore[SK]) DeleteCommandUser(ctx context.Context, id int64, 
 	// Select the primary write route, or the transaction when provided.
 	target := shard.Write()
 	mode := pgmesh.RouteModePrimary
-	writeMirrorCount := shard.WriteMirrorCount()
 	if options.tx != nil {
 		target = target.WithTx(options.tx)
 		mode = pgmesh.RouteModeTransaction
-		writeMirrorCount = 0
 	}
 
 	// Execute the write after recording its resolved route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode)
 	return target.DeleteCommandUser(ctx, id)
 }
 
 // DeleteCommandUsersByTenant executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) DeleteCommandUsersByTenant(ctx context.Context, tenantID int64, storeOptions ...QueryOption) (result int64, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "DeleteCommandUsersByTenant", pgmesh.QueryKindWrite)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Commands", "DeleteCommandUsersByTenant", pgmesh.QueryKindWrite)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -194,22 +190,20 @@ func (q *groupedMeshStore[SK]) DeleteCommandUsersByTenant(ctx context.Context, t
 	// Select the primary write route, or the transaction when provided.
 	target := shard.Write()
 	mode := pgmesh.RouteModePrimary
-	writeMirrorCount := shard.WriteMirrorCount()
 	if options.tx != nil {
 		target = target.WithTx(options.tx)
 		mode = pgmesh.RouteModeTransaction
-		writeMirrorCount = 0
 	}
 
 	// Execute the write after recording its resolved route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode)
 	return target.DeleteCommandUsersByTenant(ctx, tenantID)
 }
 
 // GetCommandUser executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) GetCommandUser(ctx context.Context, id int64, storeOptions ...QueryOption) (result *db.User, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "GetCommandUser", pgmesh.QueryKindRead)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Commands", "GetCommandUser", pgmesh.QueryKindRead)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -224,25 +218,25 @@ func (q *groupedMeshStore[SK]) GetCommandUser(ctx context.Context, id int64, sto
 
 	// Transactional reads must use their transaction.
 	if options.tx != nil {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).GetCommandUser(ctx, id)
 	}
 
 	// Explicit primary reads bypass replicas.
 	if options.primary {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().GetCommandUser(ctx, id)
 	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
 	return shard.Read().GetCommandUser(ctx, id)
 }
 
 // ListCommandUsers executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) ListCommandUsers(ctx context.Context, storeOptions ...QueryOption) (result []*db.User, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "ListCommandUsers", pgmesh.QueryKindRead)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Commands", "ListCommandUsers", pgmesh.QueryKindRead)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -257,25 +251,25 @@ func (q *groupedMeshStore[SK]) ListCommandUsers(ctx context.Context, storeOption
 
 	// Transactional reads must use their transaction.
 	if options.tx != nil {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).ListCommandUsers(ctx)
 	}
 
 	// Explicit primary reads bypass replicas.
 	if options.primary {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().ListCommandUsers(ctx)
 	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
 	return shard.Read().ListCommandUsers(ctx)
 }
 
 // TouchCommandUser executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) TouchCommandUser(ctx context.Context, id int64, storeOptions ...QueryOption) (result pgconn.CommandTag, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "TouchCommandUser", pgmesh.QueryKindWrite)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Commands", "TouchCommandUser", pgmesh.QueryKindWrite)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -291,14 +285,12 @@ func (q *groupedMeshStore[SK]) TouchCommandUser(ctx context.Context, id int64, s
 	// Select the primary write route, or the transaction when provided.
 	target := shard.Write()
 	mode := pgmesh.RouteModePrimary
-	writeMirrorCount := shard.WriteMirrorCount()
 	if options.tx != nil {
 		target = target.WithTx(options.tx)
 		mode = pgmesh.RouteModeTransaction
-		writeMirrorCount = 0
 	}
 
 	// Execute the write after recording its resolved route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode)
 	return target.TouchCommandUser(ctx, id)
 }

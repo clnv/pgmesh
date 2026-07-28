@@ -224,7 +224,7 @@ func TestQueryTelemetryRecordsRoutingAndErrors(t *testing.T) {
 		pgmesh.QueryKindWrite,
 	)
 	assert.True(t, trace.SpanFromContext(ctx).SpanContext().IsValid())
-	span.SetRoute(0, "main", pgmesh.RouteModePrimary, replicaSet.WriteMirrorCount())
+	span.SetRoute(0, "main", pgmesh.RouteModePrimary)
 	queryErr := errors.New("write failed")
 	span.End(queryErr)
 
@@ -245,7 +245,7 @@ func TestQueryTelemetryRecordsRoutingAndErrors(t *testing.T) {
 	assert.NotContains(t, attributes, attribute.Key("pgmesh.route.vshard"))
 	assert.Equal(t, "main", attributes[pgmesh.AttributeReplicaSet].AsString())
 	assert.Equal(t, "primary", attributes[pgmesh.AttributeRouteMode].AsString())
-	assert.Equal(t, int64(1), attributes[pgmesh.AttributeWriteMirrorCount].AsInt64())
+	assert.NotContains(t, attributes, attribute.Key("pgmesh.route.write_mirror_count"))
 	require.Len(t, recordedSpan.Events(), 1)
 	assert.Equal(t, "exception", recordedSpan.Events()[0].Name)
 
@@ -272,7 +272,7 @@ func TestQueryTelemetryRecordsRoutingAndErrors(t *testing.T) {
 	assert.Equal(t, "0", logRecord["vshard"])
 	assert.Equal(t, "main", logRecord["replica_set"])
 	assert.Equal(t, "primary", logRecord["route_mode"])
-	assert.InDelta(t, 1, logRecord["write_mirror_count"], 0)
+	assert.NotContains(t, logRecord, "write_mirror_count")
 	assert.Equal(t, queryErr.Error(), logRecord["error"])
 	assert.Contains(t, logRecord, "duration")
 }
@@ -296,7 +296,7 @@ func TestQueryTelemetryRecordsSuccessfulQueries(t *testing.T) {
 	require.NoError(t, err)
 
 	_, span := mesh.StartSpan(t.Context(), "UserStore", "GetUser", pgmesh.QueryKindRead)
-	span.SetRoute(0, "main", pgmesh.RouteModeRead, 0)
+	span.SetRoute(0, "main", pgmesh.RouteModeRead)
 	span.End(nil)
 
 	spans := recorder.Ended()
@@ -317,6 +317,61 @@ func TestQueryTelemetryRecordsSuccessfulQueries(t *testing.T) {
 	metricAttributes := attributeMap(data.DataPoints[0].Attributes.ToSlice())
 	assert.NotContains(t, metricAttributes, attribute.Key("error.type"))
 	assert.Equal(t, "read", metricAttributes[pgmesh.AttributeRouteMode].AsString())
+}
+
+func TestQueryTelemetryRecordsMultiRoute(t *testing.T) {
+	t.Parallel()
+
+	recorder := tracetest.NewSpanRecorder()
+	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { require.NoError(t, tracerProvider.Shutdown(context.Background())) })
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { require.NoError(t, meterProvider.Shutdown(context.Background())) })
+	var logOutput bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logOutput, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	mesh, err := pgmesh.NewBuilder[string, *fakeWriter, uint64](2).
+		WithTracerProvider(tracerProvider).
+		WithMeterProvider(meterProvider).
+		WithLogger(logger).
+		WithHasher(pgmesh.ModularShardHashFor[uint64](2)).
+		Link(0, pgmesh.NewReplicaSet("zero", node("zero"), nil)).
+		Link(1, pgmesh.NewReplicaSet("one", node("one"), nil)).
+		Build()
+	require.NoError(t, err)
+
+	_, span := mesh.StartSpan(t.Context(), "UserStore", "DeleteAll", pgmesh.QueryKindWrite)
+	span.SetMultiRoute(pgmesh.RouteModePrimary)
+	span.End(nil)
+
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	attributes := attributeMap(spans[0].Attributes())
+	assert.Equal(t, "primary", attributes[pgmesh.AttributeRouteMode].AsString())
+	assert.NotContains(t, attributes, attribute.Key("pgmesh.route.physical_shard_count"))
+	assert.NotContains(t, attributes, attribute.Key("pgmesh.route.write_mirror_count"))
+	assert.NotContains(t, attributes, attribute.Key(pgmesh.AttributeReplicaSet))
+
+	var metrics metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &metrics))
+	require.Len(t, metrics.ScopeMetrics, 1)
+	require.Len(t, metrics.ScopeMetrics[0].Metrics, 1)
+	data, ok := metrics.ScopeMetrics[0].Metrics[0].Data.(metricdata.Histogram[float64])
+	require.True(t, ok)
+	require.Len(t, data.DataPoints, 1)
+	metricAttributes := attributeMap(data.DataPoints[0].Attributes.ToSlice())
+	assert.Equal(t, "primary", metricAttributes[pgmesh.AttributeRouteMode].AsString())
+	assert.NotContains(t, metricAttributes, attribute.Key("pgmesh.route.physical_shard_count"))
+	assert.NotContains(t, metricAttributes, attribute.Key("pgmesh.route.write_mirror_count"))
+	assert.NotContains(t, metricAttributes, attribute.Key(pgmesh.AttributeReplicaSet))
+
+	var logRecord map[string]any
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(logOutput.Bytes()), &logRecord))
+	assert.NotContains(t, logRecord, "physical_shard_count")
+	assert.NotContains(t, logRecord, "write_mirror_count")
+	assert.NotContains(t, logRecord, "vshard")
+	assert.NotContains(t, logRecord, "replica_set")
 }
 
 func attributeMap(items []attribute.KeyValue) map[attribute.Key]attribute.Value {
@@ -340,7 +395,7 @@ func assertMetricAttributes(t *testing.T, items []attribute.KeyValue) {
 	assert.NotContains(t, attributes, attribute.Key("pgmesh.route.vshard"))
 	assert.Equal(t, "main", attributes[pgmesh.AttributeReplicaSet].AsString())
 	assert.Equal(t, "primary", attributes[pgmesh.AttributeRouteMode].AsString())
-	assert.Equal(t, int64(1), attributes[pgmesh.AttributeWriteMirrorCount].AsInt64())
+	assert.NotContains(t, attributes, attribute.Key("pgmesh.route.write_mirror_count"))
 }
 
 func TestReplicaSetFallsBackToPrimaryReader(t *testing.T) {

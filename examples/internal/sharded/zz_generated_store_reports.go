@@ -33,7 +33,7 @@ func (q *meshStore[SK]) Reports() Reports {
 // CountAccounts executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) CountAccounts(ctx context.Context, tenantID int64, storeOptions ...QueryOption) (result int64, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "CountAccounts", pgmesh.QueryKindRead)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Reports", "CountAccounts", pgmesh.QueryKindRead)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -51,17 +51,17 @@ func (q *groupedMeshStore[SK]) CountAccounts(ctx context.Context, tenantID int64
 
 	// Transactional reads must use their transaction.
 	if options.tx != nil {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).CountAccounts(ctx, tenantID)
 	}
 
 	// Explicit primary reads bypass replicas.
 	if options.primary {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().CountAccounts(ctx, tenantID)
 	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
 	return shard.Read().CountAccounts(ctx, tenantID)
 }

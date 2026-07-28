@@ -31,8 +31,6 @@ const (
 	AttributeReplicaSet = "pgmesh.route.replica_set"
 	// AttributeRouteMode identifies the database path selected for a query.
 	AttributeRouteMode = "pgmesh.route.mode"
-	// AttributeWriteMirrorCount reports the number of configured write mirrors.
-	AttributeWriteMirrorCount = "pgmesh.route.write_mirror_count"
 )
 
 // QueryKind classifies a routed query as a read or write.
@@ -163,12 +161,10 @@ func (s *QuerySpan) SetRoute(
 	vshard uint64,
 	replicaSet string,
 	mode RouteMode,
-	writeMirrorCount int,
 ) {
 	routeAttributes := []attribute.KeyValue{
 		attribute.String(AttributeReplicaSet, replicaSet),
 		attribute.String(AttributeRouteMode, string(mode)),
-		attribute.Int(AttributeWriteMirrorCount, writeMirrorCount),
 	}
 	s.span.SetAttributes(routeAttributes...)
 	s.attributes = append(s.attributes, routeAttributes...)
@@ -177,7 +173,21 @@ func (s *QuerySpan) SetRoute(
 		slog.String("vshard", strconv.FormatUint(vshard, 10)),
 		slog.String("replica_set", replicaSet),
 		slog.String("route_mode", string(mode)),
-		slog.Int("write_mirror_count", writeMirrorCount),
+	)
+}
+
+// SetMultiRoute records the routing mode for one logical operation targeting
+// zero or more physical replica sets. It deliberately omits a virtual-shard
+// index and replica-set name because no single value represents the operation.
+func (s *QuerySpan) SetMultiRoute(mode RouteMode) {
+	routeAttributes := []attribute.KeyValue{
+		attribute.String(AttributeRouteMode, string(mode)),
+	}
+	s.span.SetAttributes(routeAttributes...)
+	s.attributes = append(s.attributes, routeAttributes...)
+	s.logAttributes = append(
+		s.logAttributes,
+		slog.String("route_mode", string(mode)),
 	)
 }
 

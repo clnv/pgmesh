@@ -79,7 +79,7 @@ func (q *meshStore[SK]) QueryMessage() QueryMessage {
 // ListP2PMessageIDsByChat executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) ListP2PMessageIDsByChat(ctx context.Context, arg *ListP2PMessageIDsByChatShardParams, storeOptions ...QueryOption) (result []interface{}, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "ListP2PMessageIDsByChat", pgmesh.QueryKindRead)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "QueryMessage", "ListP2PMessageIDsByChat", pgmesh.QueryKindRead)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -97,25 +97,25 @@ func (q *groupedMeshStore[SK]) ListP2PMessageIDsByChat(ctx context.Context, arg 
 
 	// Transactional reads must use their transaction.
 	if options.tx != nil {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).ListP2PMessageIDsByChat(ctx, arg.sqlcParams())
 	}
 
 	// Explicit primary reads bypass replicas.
 	if options.primary {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().ListP2PMessageIDsByChat(ctx, arg.sqlcParams())
 	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
 	return shard.Read().ListP2PMessageIDsByChat(ctx, arg.sqlcParams())
 }
 
 // ListP2PMessagesByChat executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) ListP2PMessagesByChat(ctx context.Context, arg *ListP2PMessagesByChatShardParams, storeOptions ...QueryOption) (result []*db.Message, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "ListP2PMessagesByChat", pgmesh.QueryKindRead)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "QueryMessage", "ListP2PMessagesByChat", pgmesh.QueryKindRead)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -133,17 +133,17 @@ func (q *groupedMeshStore[SK]) ListP2PMessagesByChat(ctx context.Context, arg *L
 
 	// Transactional reads must use their transaction.
 	if options.tx != nil {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).ListP2PMessagesByChat(ctx, arg.sqlcParams())
 	}
 
 	// Explicit primary reads bypass replicas.
 	if options.primary {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().ListP2PMessagesByChat(ctx, arg.sqlcParams())
 	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
 	return shard.Read().ListP2PMessagesByChat(ctx, arg.sqlcParams())
 }

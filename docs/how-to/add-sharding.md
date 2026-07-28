@@ -116,10 +116,21 @@ account, err := queries.Accounts().GetAccount(
 )
 ```
 
+Queries annotated with `shard: all()` run once per physical replica set rather
+than once per virtual shard. Ordinary reads select one replica from each set;
+`ReadFromPrimary()` selects every primary. Scatter writes also use each
+physical primary and its configured mirrors.
+
+Routed `:copyfrom` inputs are resolved and grouped by physical replica set
+before any copy begins. Multiple virtual shards placed on the same replica set
+share one copy operation.
+
 ## Operational checklist
 
 - Apply compatible schema to every physical database before routing traffic.
 - Confirm the resolver and hasher match the placement used by existing data.
+- Treat scatter writes and grouped copies as potentially partially committed
+  when one physical shard fails.
 - Move data before changing a virtual-shard mapping.
 - Keep old and new application versions compatible during a topology rollout.
 - Close every configured pool during shutdown.

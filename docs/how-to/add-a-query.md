@@ -96,6 +96,32 @@ models plus tables named by the SQL's source relations take precedence over
 models inferred only from SQL parameters; matching models within the same tier
 must produce compatible field names and Go types.
 
+### Run a query on every physical shard
+
+Use the reserved route `shard: all()` when a query must run once per physical
+replica set and does not have a shard key:
+
+```sql
+-- name: ListAllAccounts :many
+-- kind: read
+-- shard: all()
+-- store: Accounts
+SELECT id, tenant_id, display_name
+FROM accounts
+ORDER BY id;
+```
+
+Scatter routing is supported for `:many`, `:exec`, and `:execrows`. A `:many`
+result concatenates physical-shard results in topology order, while `:execrows`
+sums affected rows. Calls run concurrently and attempt every physical shard. If
+any target fails, the returned error joins errors labeled with their
+replica-set names and the returned rows or count is zero. Use
+`ReadFromPrimary()` when a scatter read must bypass replicas.
+
+`WithTx` cannot be used with `shard: all()` because a PostgreSQL transaction
+belongs to one database. The method returns `pgmesh.ErrCrossShardTransaction`
+without dispatching the query.
+
 ## 4. Group every query
 
 Every query must declare its generated sub-interface. Add `store` after the
@@ -172,7 +198,34 @@ account, err := queries.Accounts().GetAccount(ctx, arg, db.ReadFromPrimary())
 
 ## Batch and copy queries
 
-`:copyfrom` and `:batch*` methods are supported by unsharded stores. They cannot
-declare shard metadata. A generated store that contains any sharded query
-requires shard metadata on every query, so batch or copy operations that need
-manual partitioning belong in a separate generated store.
+A `:copyfrom` query may use an ordinary shard route:
+
+```sql
+-- name: CopyAccounts :copyfrom
+-- kind: write
+-- shard: tenant(tenant_id)
+-- store: Accounts
+INSERT INTO accounts (id, tenant_id, display_name)
+VALUES ($1, $2, $3);
+```
+
+The generated method resolves every input row before writing, groups rows that
+map to the same physical replica set, and runs one `COPY FROM` per nonempty
+group. It therefore performs O(n) local routing work and O(p) database round
+trips, where p is the number of targeted physical shards. Input order is
+preserved within each group, and configured write mirrors receive their
+physical shard's group.
+
+Routing-only operands produce a flattened `[]*CopyAccountsShardParams`, using
+the same wrapper convention as ordinary routed queries. A routing error causes
+no copies. Database groups run concurrently and are all attempted; any error
+causes the method to return a zero count and a joined, replica-set-labeled
+error.
+
+`WithTx` is accepted only when every row resolves to one physical shard. It
+returns `pgmesh.ErrCrossShardTransaction` before writing when multiple shards
+are present, and suppresses write mirrors when it succeeds.
+
+Sharded `:batch*` methods remain unsupported because sqlc exposes their
+database errors later through batch-result callbacks. Keep those methods in an
+unsharded generated store or partition them explicitly in application code.

@@ -50,7 +50,7 @@ func (q *meshStore[SK]) Analyses() Analyses {
 // GetAnalysis executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) GetAnalysis(ctx context.Context, arg *db.GetAnalysisParams, storeOptions ...QueryOption) (result *db.Analysis, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "GetAnalysis", pgmesh.QueryKindRead)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Analyses", "GetAnalysis", pgmesh.QueryKindRead)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -68,25 +68,25 @@ func (q *groupedMeshStore[SK]) GetAnalysis(ctx context.Context, arg *db.GetAnaly
 
 	// Transactional reads must use their transaction.
 	if options.tx != nil {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).GetAnalysis(ctx, arg)
 	}
 
 	// Explicit primary reads bypass replicas.
 	if options.primary {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().GetAnalysis(ctx, arg)
 	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
 	return shard.Read().GetAnalysis(ctx, arg)
 }
 
 // GetTenantUserAnalysis executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) GetTenantUserAnalysis(ctx context.Context, arg *GetTenantUserAnalysisShardParams, storeOptions ...QueryOption) (result *db.GetTenantUserAnalysisRow, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "GetTenantUserAnalysis", pgmesh.QueryKindRead)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Analyses", "GetTenantUserAnalysis", pgmesh.QueryKindRead)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -104,17 +104,17 @@ func (q *groupedMeshStore[SK]) GetTenantUserAnalysis(ctx context.Context, arg *G
 
 	// Transactional reads must use their transaction.
 	if options.tx != nil {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).GetTenantUserAnalysis(ctx, arg.sqlcParams())
 	}
 
 	// Explicit primary reads bypass replicas.
 	if options.primary {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().GetTenantUserAnalysis(ctx, arg.sqlcParams())
 	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
 	return shard.Read().GetTenantUserAnalysis(ctx, arg.sqlcParams())
 }

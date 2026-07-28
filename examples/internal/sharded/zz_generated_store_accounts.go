@@ -37,7 +37,7 @@ func (q *meshStore[SK]) Accounts() Accounts {
 // GetAccount executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) GetAccount(ctx context.Context, arg *GetAccountParams, storeOptions ...QueryOption) (result *Account, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "GetAccount", pgmesh.QueryKindRead)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Accounts", "GetAccount", pgmesh.QueryKindRead)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -55,25 +55,25 @@ func (q *groupedMeshStore[SK]) GetAccount(ctx context.Context, arg *GetAccountPa
 
 	// Transactional reads must use their transaction.
 	if options.tx != nil {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)
 		return shard.Write().WithTx(options.tx).GetAccount(ctx, arg)
 	}
 
 	// Explicit primary reads bypass replicas.
 	if options.primary {
-		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary)
 		return shard.Write().GetAccount(ctx, arg)
 	}
 
 	// Ordinary reads use the shard's replica route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)
 	return shard.Read().GetAccount(ctx, arg)
 }
 
 // UpdateAccountName executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) UpdateAccountName(ctx context.Context, arg *UpdateAccountNameParams, storeOptions ...QueryOption) (result *Account, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "UpdateAccountName", pgmesh.QueryKindWrite)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Accounts", "UpdateAccountName", pgmesh.QueryKindWrite)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -92,22 +92,20 @@ func (q *groupedMeshStore[SK]) UpdateAccountName(ctx context.Context, arg *Updat
 	// Select the primary write route, or the transaction when provided.
 	target := shard.Write()
 	mode := pgmesh.RouteModePrimary
-	writeMirrorCount := shard.WriteMirrorCount()
 	if options.tx != nil {
 		target = target.WithTx(options.tx)
 		mode = pgmesh.RouteModeTransaction
-		writeMirrorCount = 0
 	}
 
 	// Execute the write after recording its resolved route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode)
 	return target.UpdateAccountName(ctx, arg)
 }
 
 // UpsertAccount executes the generated query on its target shard.
 func (q *groupedMeshStore[SK]) UpsertAccount(ctx context.Context, arg *UpsertAccountParams, storeOptions ...QueryOption) (result *Account, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "UpsertAccount", pgmesh.QueryKindWrite)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Accounts", "UpsertAccount", pgmesh.QueryKindWrite)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
@@ -126,14 +124,12 @@ func (q *groupedMeshStore[SK]) UpsertAccount(ctx context.Context, arg *UpsertAcc
 	// Select the primary write route, or the transaction when provided.
 	target := shard.Write()
 	mode := pgmesh.RouteModePrimary
-	writeMirrorCount := shard.WriteMirrorCount()
 	if options.tx != nil {
 		target = target.WithTx(options.tx)
 		mode = pgmesh.RouteModeTransaction
-		writeMirrorCount = 0
 	}
 
 	// Execute the write after recording its resolved route.
-	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode)
 	return target.UpsertAccount(ctx, arg)
 }

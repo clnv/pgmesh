@@ -23,6 +23,34 @@ SET name = $3
 WHERE tenant_id = $1 AND id = $2
 RETURNING id, tenant_id, name;
 
+-- name: ListAllUsers :many
+-- kind: read
+-- shard: all()
+-- store: Users
+SELECT id, tenant_id, name
+FROM users
+ORDER BY id;
+
+-- name: DeleteAllUsers :exec
+-- kind: write
+-- shard: all()
+-- store: Users
+DELETE FROM users;
+
+-- name: DeleteAllUsersByName :execrows
+-- kind: write
+-- shard: all()
+-- store: Users
+DELETE FROM users
+WHERE name = $1;
+
+-- name: CopyUsers :copyfrom
+-- kind: write
+-- shard: tenant(tenant_id)
+-- store: Users
+INSERT INTO users (id, tenant_id, name)
+VALUES ($1, $2, $3);
+
 -- name: GetAnalysis :one
 -- kind: read
 -- shard: tenant(tenant_id)

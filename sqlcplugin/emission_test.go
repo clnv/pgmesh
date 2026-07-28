@@ -704,24 +704,25 @@ func TestGenerateShardRoutedFacade(t *testing.T) {
 		"func (q *groupedMeshStore[SK]) ListP2PMessages(ctx context.Context, arg *ListP2PMessagesParams, storeOptions ...QueryOption) (result []int64, err error)",
 		"var shardKey SK",
 		"shardKey = q.store.resolver.P2P(arg.UserID, arg.PeerID)",
-		`q.store.mesh.StartSpan(ctx, "Store", "ListP2PMessages", pgmesh.QueryKindRead)`,
-		`q.store.mesh.StartSpan(ctx, "Store", "CreateP2PMessage", pgmesh.QueryKindWrite)`,
+		`q.store.mesh.StartSpan(ctx, "Messages", "ListP2PMessages", pgmesh.QueryKindRead)`,
+		`q.store.mesh.StartSpan(ctx, "Messages", "CreateP2PMessage", pgmesh.QueryKindWrite)`,
 		"// Trace the query and record its returned error.",
 		"defer func() { querySpan.End(err) }()",
 		"// Resolve the shard key for this topology.",
 		"// Apply options that can override the default route.",
-		"querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)",
-		"querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)",
+		"querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead)",
+		"querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction)",
 		"return shard.Read().ListP2PMessages(ctx, arg)",
 		"return shard.Write().WithTx(options.tx).ListP2PMessages(ctx, arg)",
 		"target := shard.Write()",
-		"writeMirrorCount := shard.WriteMirrorCount()",
-		"querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode, writeMirrorCount)",
+		"querySpan.SetRoute(shard.VShardIndex(), shard.Name(), mode)",
 		"return target.CreateP2PMessage(ctx, arg)",
 	}
 	for _, check := range checks {
 		assert.Contains(t, got, check)
 	}
+	assert.NotContains(t, got, "WriteMirrorCount()")
+	assert.NotContains(t, got, "writeMirrorCount")
 	meshReadBody := generatedMethodBody(t, got, "groupedMeshStore[SK]", "ListP2PMessages")
 	assert.NotContains(t, meshReadBody, "var queryErr error")
 	assert.NotContains(t, meshReadBody, "queryErr =")
@@ -1175,21 +1176,13 @@ func TestGenerateRejectsInvalidRoutingConfigurations(t *testing.T) {
 			want: "non-exported or invalid resolver method",
 		},
 		{
-			name: "copyfrom route",
-			request: base(&plugin.Query{
-				Name: "CreateMessages", Cmd: ":copyfrom", Comments: []string{"kind: write", "shard: inbox(inbox_id)", "store: Messages"},
-				Params: []*plugin.Parameter{{Number: 1, Column: &plugin.Column{Name: "inbox_id", Type: int8Type, NotNull: true}}},
-			}),
-			want: "cannot declare shard metadata",
-		},
-		{
 			name: "batch route",
 			request: base(&plugin.Query{
 				Name: "GetMessages", Cmd: ":batchmany", Comments: []string{"kind: read", "shard: inbox(inbox_id)", "store: Messages"},
 				Params:  []*plugin.Parameter{{Number: 1, Column: &plugin.Column{Name: "inbox_id", Type: int8Type, NotNull: true}}},
 				Columns: []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}},
 			}),
-			want: "cannot declare shard metadata",
+			want: "grouped routing is supported only for :copyfrom",
 		},
 		{
 			name: "conflicting route signatures",
@@ -1291,6 +1284,191 @@ func TestGenerateRejectsInvalidRoutingConfigurations(t *testing.T) {
 			require.ErrorContains(t, err, test.want)
 		})
 	}
+}
+
+func TestGenerateAllShardsQueries(t *testing.T) {
+	t.Parallel()
+
+	int8Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int8"}
+	response, err := Generate(t.Context(), &plugin.GenerateRequest{
+		Settings: &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "db"}},
+		Catalog:  &plugin.Catalog{DefaultSchema: "public"},
+		Queries: []*plugin.Query{
+			{
+				Name:     "ListAll",
+				Cmd:      ":many",
+				Comments: []string{"kind: read", "shard: all()", "store: Reports"},
+				Columns:  []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}},
+			},
+			{
+				Name:     "DeleteAll",
+				Cmd:      ":exec",
+				Comments: []string{"kind: write", "shard: all()", "store: Reports"},
+			},
+			{
+				Name:     "DeleteMatching",
+				Cmd:      ":execrows",
+				Comments: []string{"kind: write", "shard: all()", "store: Reports"},
+			},
+		},
+		PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5"}`),
+	})
+	require.NoError(t, err)
+
+	got := generatedSource(response)
+	assert.Contains(t, got, "type ShardResolver[SK any] interface {\n}")
+	assert.NotContains(t, got, "All() SK")
+	assert.Contains(t, got, "func Sharded[SK any](")
+	assert.Contains(t, got, "q.store.mesh.AllShards()")
+	assert.Contains(t, got, "pgmesh.ErrCrossShardTransaction")
+	assert.Contains(t, got, "querySpan.SetMultiRoute(")
+	assert.Contains(t, got, "var group sync.WaitGroup")
+	assert.Contains(t, got, `errors.Join(shardErrors...)`)
+	assert.Contains(t, got, "ListAll(ctx context.Context, storeOptions ...QueryOption) ([]int64, error)")
+	assert.Contains(t, got, "DeleteAll(ctx context.Context, storeOptions ...QueryOption) error")
+	assert.Contains(t, got, "DeleteMatching(ctx context.Context, storeOptions ...QueryOption) (int64, error)")
+	assert.Contains(t, got, `q.store.mesh.StartSpan(ctx, "Reports", "ListAll", pgmesh.QueryKindRead)`)
+	assert.Contains(t, got, `q.store.mesh.StartSpan(ctx, "Reports", "DeleteAll", pgmesh.QueryKindWrite)`)
+	assert.NotContains(t, got, "WriteMirrorCount()")
+	assert.NotContains(t, got, "writeMirrorCount")
+}
+
+func TestGenerateRejectsUnsupportedAllShardsCommands(t *testing.T) {
+	t.Parallel()
+
+	int8Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int8"}
+	for _, command := range []string{
+		":one",
+		":execresult",
+		":copyfrom",
+		":batchexec",
+		":batchone",
+		":batchmany",
+	} {
+		t.Run(command, func(t *testing.T) {
+			t.Parallel()
+			query := &plugin.Query{
+				Name:     "Unsupported",
+				Cmd:      command,
+				Comments: []string{"kind: write", "shard: all()", "store: Commands"},
+			}
+			if command == ":one" || command == ":batchone" || command == ":batchmany" {
+				query.Columns = []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}}
+			}
+			if command == ":copyfrom" || strings.HasPrefix(command, ":batch") {
+				query.Params = []*plugin.Parameter{{
+					Number: 1,
+					Column: &plugin.Column{Name: "id", Type: int8Type, NotNull: true},
+				}}
+			}
+			_, err := Generate(t.Context(), &plugin.GenerateRequest{
+				Settings:      &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "db"}},
+				Catalog:       &plugin.Catalog{DefaultSchema: "public"},
+				Queries:       []*plugin.Query{query},
+				PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5"}`),
+			})
+			require.ErrorContains(t, err, "unsupported command")
+		})
+	}
+
+	_, err := Generate(t.Context(), &plugin.GenerateRequest{
+		Settings: &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "db"}},
+		Catalog:  &plugin.Catalog{DefaultSchema: "public"},
+		Queries: []*plugin.Query{{
+			Name:     "InvalidAll",
+			Cmd:      ":many",
+			Comments: []string{"kind: read", "shard: all(tenant_id)", "store: Reports"},
+			Columns:  []*plugin.Column{{Name: "id", Type: int8Type, NotNull: true}},
+		}},
+		PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5"}`),
+	})
+	require.ErrorContains(t, err, `shard route "all" cannot declare operands`)
+}
+
+func TestGenerateGroupedCopyWithRoutingOnlyOperand(t *testing.T) {
+	t.Parallel()
+
+	int8Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int8"}
+	textType := &plugin.Identifier{Name: "text"}
+	users := &plugin.Identifier{Schema: "public", Name: "users"}
+	response, err := Generate(t.Context(), &plugin.GenerateRequest{
+		Settings: &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "db"}},
+		Catalog: &plugin.Catalog{
+			DefaultSchema: "public",
+			Schemas: []*plugin.Schema{{
+				Name: "public",
+				Tables: []*plugin.Table{{
+					Rel: users,
+					Columns: []*plugin.Column{
+						{Name: "id", Type: int8Type, NotNull: true},
+						{Name: "tenant_id", Type: int8Type, NotNull: true},
+						{Name: "name", Type: textType, NotNull: true},
+					},
+				}},
+			}},
+		},
+		Queries: []*plugin.Query{{
+			Name:            "CopyUsers",
+			Cmd:             ":copyfrom",
+			Comments:        []string{"kind: write", "shard: tenant(tenant_id)", "store: Users"},
+			InsertIntoTable: users,
+			Params: []*plugin.Parameter{
+				{Number: 1, Column: &plugin.Column{Name: "id", Type: int8Type, NotNull: true}},
+				{Number: 2, Column: &plugin.Column{Name: "name", Type: textType, NotNull: true}},
+			},
+		}},
+		PluginOptions: []byte(`{
+			"package":"db",
+			"sql_package":"pgx/v5",
+			"emit_params_struct_pointers":true
+		}`),
+	})
+	require.NoError(t, err)
+
+	got := generatedSource(response)
+	assert.Contains(
+		t,
+		got,
+		"type CopyUsersShardParams struct {\n\tID       int64\n\tName     string\n\tTenantID int64\n}",
+	)
+	assert.Contains(
+		t,
+		got,
+		"CopyUsers(ctx context.Context, arg []*CopyUsersShardParams, storeOptions ...QueryOption) (int64, error)",
+	)
+	assert.Contains(t, got, "shardKey = q.store.resolver.Tenant(item.TenantID)")
+	assert.Contains(t, got, "shardGroup.args = append(shardGroup.args, item.sqlcParams())")
+	assert.Contains(t, got, "target.CopyUsers(ctx, shardGroup.args)")
+	assert.Contains(t, got, `q.store.mesh.StartSpan(ctx, "Users", "CopyUsers", pgmesh.QueryKindWrite)`)
+	assert.NotContains(t, got, "WriteMirrorCount()")
+	assert.NotContains(t, got, "writeMirrorCount")
+}
+
+func TestGenerateGroupedCopyWithScalarParameter(t *testing.T) {
+	t.Parallel()
+
+	int8Type := &plugin.Identifier{Schema: "pg_catalog", Name: "int8"}
+	response, err := Generate(t.Context(), &plugin.GenerateRequest{
+		Settings: &plugin.Settings{Engine: "postgresql", Codegen: &plugin.Codegen{Out: "db"}},
+		Catalog:  &plugin.Catalog{DefaultSchema: "public"},
+		Queries: []*plugin.Query{{
+			Name:     "CopyIDs",
+			Cmd:      ":copyfrom",
+			Comments: []string{"kind: write", "shard: entity(id)", "store: Entities"},
+			Params: []*plugin.Parameter{{
+				Number: 1,
+				Column: &plugin.Column{Name: "id", Type: int8Type, NotNull: true},
+			}},
+		}},
+		PluginOptions: []byte(`{"package":"db","sql_package":"pgx/v5"}`),
+	})
+	require.NoError(t, err)
+
+	got := generatedSource(response)
+	assert.Contains(t, got, "CopyIDs(ctx context.Context, id []int64, storeOptions ...QueryOption) (int64, error)")
+	assert.Contains(t, got, "shardKey = q.store.resolver.Entity(item)")
+	assert.Contains(t, got, "args  []int64")
+	assert.Contains(t, got, "shardGroup.args = append(shardGroup.args, item)")
 }
 
 func TestGenerateSupportsAllNodeLevelCommands(t *testing.T) {

@@ -63,11 +63,26 @@ resolved physical shard. Use the same resolver, hasher, and mapping held in the
 store configuration to choose the retained primary pool. pgmesh cannot
 validate the origin of a `pgx.Tx`.
 
-## A batch or copy method cannot be generated with sharding
+## A batch method cannot be generated with sharding
 
-This is intentional. pgmesh does not automatically partition `:copyfrom` or
-`:batch*` inputs. Put manually partitioned operations in a separate unsharded
-generated store.
+This is intentional. pgmesh partitions routed `:copyfrom` inputs by physical
+shard, but sqlc `:batch*` methods expose execution errors later through callback
+result objects. Put batch operations in a separate unsharded generated store or
+partition them explicitly in application code.
+
+## A special operation reports a cross-shard transaction
+
+`shard: all()` cannot run through one transaction. Routed `:copyfrom` can use
+`WithTx` only when every input row resolves to the same physical shard. In both
+cases pgmesh returns `pgmesh.ErrCrossShardTransaction` before dispatching any
+database operation.
+
+## A scatter or grouped copy partially committed
+
+Physical shards do not share a transaction. Scatter and grouped-copy calls
+attempt every target and return joined errors labeled by replica-set name, but
+successful shards may already have committed. Make these writes idempotent and
+reconcile failed shards before retrying.
 
 ## Local integration failures
 

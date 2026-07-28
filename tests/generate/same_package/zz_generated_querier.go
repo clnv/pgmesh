@@ -12,7 +12,19 @@ type Querier interface {
 	// kind: write
 	// shard: tenant(tenant_id)
 	// store: Users
+	CopyUsers(ctx context.Context, arg []*CopyUsersParams) (int64, error)
+	// kind: write
+	// shard: tenant(tenant_id)
+	// store: Users
 	CreateUser(ctx context.Context, arg *CreateUserParams) (*User, error)
+	// kind: write
+	// shard: all()
+	// store: Users
+	DeleteAllUsers(ctx context.Context) error
+	// kind: write
+	// shard: all()
+	// store: Users
+	DeleteAllUsersByName(ctx context.Context, name string) (int64, error)
 	// kind: read
 	// shard: tenant(tenant_id)
 	// store: Analyses
@@ -25,6 +37,10 @@ type Querier interface {
 	// shard: tenant(tenant_id)
 	// store: Users
 	GetUser(ctx context.Context, arg *GetUserParams) (*User, error)
+	// kind: read
+	// shard: all()
+	// store: Users
+	ListAllUsers(ctx context.Context) ([]*User, error)
 	// kind: read
 	// shard: messageKey(user_id, to_user_or_group_id, in_group)
 	// store: QueryMessage
