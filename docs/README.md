@@ -29,8 +29,9 @@ The documentation is organized by what you are trying to learn or accomplish.
 
 The [`examples`](../examples) directory progresses from a single database to
 read replicas, virtual sharding, shard-expansion dual writes, and transactions.
-The [`integration/fixture`](../integration/fixture) package is the larger generated
-fixture used by both unit and Docker-backed integration tests.
+The independent cases under [`tests/generate`](../tests/generate) verify
+same-package, separate-package, and command-shape generation with both basic
+API checks and Docker-backed PostgreSQL tests.
 
 For query annotations and supported commands, see [Add a query](how-to/add-a-query.md).
 For plugin options and output layouts, see

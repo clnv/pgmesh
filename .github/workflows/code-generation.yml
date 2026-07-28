@@ -17,7 +17,49 @@ concurrency:
 
 jobs:
   code-generation:
-    name: Generated code is current
+    name: Generated code (${{ matrix.case }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        case:
+          - same_package
+          - separate_package
+          - commands
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Set up just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: "1.57.0"
+
+      - name: Regenerate test case
+        run: just generate-case "${{ matrix.case }}"
+
+      - name: Check for generated-code drift
+        shell: bash
+        run: |
+          git diff --exit-code -- "tests/generate/${{ matrix.case }}"
+          untracked="$(git ls-files --others --exclude-standard -- "tests/generate/${{ matrix.case }}")"
+          if [[ -n "$untracked" ]]; then
+            echo "Generation produced untracked files:"
+            echo "$untracked"
+            exit 1
+          fi
+
+  examples:
+    name: Generated example code
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -37,9 +79,6 @@ jobs:
         with:
           just-version: "1.57.0"
 
-      - name: Regenerate integration fixtures
-        run: just generate-fixture
-
       - name: Regenerate example code
         working-directory: examples
         run: just generate
@@ -47,8 +86,8 @@ jobs:
       - name: Check for generated-code drift
         shell: bash
         run: |
-          git diff --exit-code -- . ':(exclude)bin/sqlc-gen-store'
-          untracked="$(git ls-files --others --exclude-standard)"
+          git diff --exit-code -- examples
+          untracked="$(git ls-files --others --exclude-standard -- examples)"
           if [[ -n "$untracked" ]]; then
             echo "Generation produced untracked files:"
             echo "$untracked"
