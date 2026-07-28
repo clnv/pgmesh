@@ -10,8 +10,10 @@ import (
 
 type Querier interface {
 	// kind: read
+	// store: Settings
 	GetSetting(ctx context.Context, key string) (*ApplicationSetting, error)
 	// kind: write
+	// store: Settings
 	UpsertSetting(ctx context.Context, arg *UpsertSettingParams) (*ApplicationSetting, error)
 }
 

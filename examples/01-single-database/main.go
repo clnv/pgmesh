@@ -32,11 +32,12 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	account, err := createAccount(ctx, queries)
+	accounts := queries.Accounts()
+	account, err := createAccount(ctx, accounts)
 	if err != nil {
 		return err
 	}
-	return loadAndPrintAccount(ctx, queries, account)
+	return loadAndPrintAccount(ctx, accounts, account)
 }
 
 func openDatabase(ctx context.Context) (*pgxpool.Pool, error) {
@@ -55,8 +56,8 @@ func openDatabase(ctx context.Context) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
-func createAccount(ctx context.Context, queries sharded.Store) (*sharded.Account, error) {
-	account, err := queries.UpsertAccount(ctx, &sharded.UpsertAccountParams{
+func createAccount(ctx context.Context, accounts sharded.AccountsWriter) (*sharded.Account, error) {
+	account, err := accounts.UpsertAccount(ctx, &sharded.UpsertAccountParams{
 		ID:          1001,
 		TenantID:    42,
 		DisplayName: "single database",
@@ -69,10 +70,10 @@ func createAccount(ctx context.Context, queries sharded.Store) (*sharded.Account
 
 func loadAndPrintAccount(
 	ctx context.Context,
-	queries sharded.Store,
+	accounts sharded.AccountsReader,
 	account *sharded.Account,
 ) error {
-	loaded, err := queries.GetAccount(ctx, &sharded.GetAccountParams{
+	loaded, err := accounts.GetAccount(ctx, &sharded.GetAccountParams{
 		TenantID: account.TenantID,
 		ID:       account.ID,
 	})

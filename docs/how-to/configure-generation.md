@@ -98,7 +98,7 @@ with `\`. `go_type` supports sqlc's string form and map form shown above.
 
 `zz_generated_store.go` produces:
 
-- `zz_generated_store_interfaces.go` for `Store` and shard resolver contracts;
+- `zz_generated_store_interfaces.go` for `Store`, query-group, and shard resolver contracts;
 - `zz_generated_store_read.go` for the private read executor;
 - `zz_generated_store_write.go` for private primary and mirror execution;
 - `zz_generated_store.go` for query and store options, `Topology`, `Singleton`, `NewStore`, and routing;
@@ -112,7 +112,8 @@ The stable default public surface is:
 
 | Symbol | Purpose |
 | --- | --- |
-| `Store` | Topology-independent generated query interface |
+| `Store` | Topology-independent root exposing every required query group |
+| `<Group>`, `<Group>Reader`, `<Group>Writer` | Combined and read/write-separated interfaces derived from `store` annotations |
 | `NewStore(ctx, topology, ...StoreOption)` | Store constructor and common telemetry options |
 | `Singleton(primary, ...SingletonOption)` | Single-primary topology with optional replicas and mirrors |
 | `Sharded(numVShards, hasher, resolver, ...ShardedOption)` | Sharded topology, emitted for routed stores |

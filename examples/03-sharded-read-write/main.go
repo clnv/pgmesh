@@ -28,5 +28,10 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return exerciseStores(ctx, accounts, settings)
+	return exerciseStores(
+		ctx,
+		accounts.Accounts(),
+		accounts.Reports(),
+		settings.Settings(),
+	)
 }

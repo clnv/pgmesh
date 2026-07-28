@@ -10,8 +10,9 @@ import (
 
 func exerciseStores(
 	ctx context.Context,
-	accounts accountStore,
-	settings settingsStore,
+	accounts sharded.Accounts,
+	reports sharded.ReportsReader,
+	settings one.Settings,
 ) error {
 	account, err := accounts.UpsertAccount(ctx, &sharded.UpsertAccountParams{
 		ID:          3001,
@@ -30,6 +31,16 @@ func exerciseStores(
 		return fmt.Errorf("routed primary read: %w", err)
 	}
 	fmt.Printf("tenant %d account: %s\n", account.TenantID, account.DisplayName)
+
+	count, err := reports.CountAccounts(
+		ctx,
+		account.TenantID,
+		sharded.ReadFromPrimary(),
+	)
+	if err != nil {
+		return fmt.Errorf("count tenant accounts: %w", err)
+	}
+	fmt.Printf("tenant %d account count: %d\n", account.TenantID, count)
 
 	_, err = settings.UpsertSetting(ctx, &one.UpsertSettingParams{
 		Key:   "deployment_name",

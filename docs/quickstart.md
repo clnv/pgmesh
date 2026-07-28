@@ -1,7 +1,7 @@
 # Quickstart
 
-This guide starts with one PostgreSQL database. It generates read/write-aware
-wrappers and calls them directly; sharding is an optional next step.
+This guide starts with one PostgreSQL database. It generates grouped,
+read/write-aware wrappers; sharding is an optional next step.
 
 ## Prerequisites
 
@@ -48,12 +48,14 @@ Create `db/queries.sql`:
 ```sql
 -- name: GetAccount :one
 -- kind: read
+-- store: Accounts
 SELECT id, tenant_id, display_name
 FROM accounts
 WHERE id = $1;
 
 -- name: UpsertAccount :one
 -- kind: write
+-- store: Accounts
 INSERT INTO accounts (id, tenant_id, display_name)
 VALUES ($1, $2, $3)
 ON CONFLICT (id) DO UPDATE
@@ -63,7 +65,10 @@ RETURNING id, tenant_id, display_name;
 ```
 
 Every query in a pgmesh-managed store needs `kind: read` or `kind: write`
-immediately after the sqlc `name` annotation.
+immediately after the sqlc `name` annotation. Every query also needs a
+`-- store: ExportedGroup` annotation after `kind` (or after `shard` when
+present). Queries are called through their generated group, such as
+`queries.Accounts().GetAccount(...)`.
 
 ## 3. Configure sqlc and pgmesh
 
@@ -113,8 +118,9 @@ project-relative path.
 sqlc generate
 ```
 
-Alongside sqlc's output, pgmesh generates the public `Store` interface,
-`NewStore`, topology option APIs, and private routing executors.
+Alongside sqlc's output, pgmesh generates the public root `Store`, its query
+group interfaces, `NewStore`, topology option APIs, and private routing
+executors.
 
 Commit generated files when your project checks them in. Regenerate them after
 every schema, query, annotation, or relevant sqlc option change.
@@ -147,7 +153,8 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    account, err := queries.UpsertAccount(ctx, &db.UpsertAccountParams{
+    accounts := queries.Accounts()
+    account, err := accounts.UpsertAccount(ctx, &db.UpsertAccountParams{
         ID:          1,
         TenantID:    42,
         DisplayName: "Ada",
@@ -156,7 +163,7 @@ func main() {
         log.Fatal(err)
     }
 
-    loaded, err := queries.GetAccount(ctx, account.ID)
+    loaded, err := accounts.GetAccount(ctx, account.ID)
     if err != nil {
         log.Fatal(err)
     }

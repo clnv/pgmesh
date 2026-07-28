@@ -23,6 +23,7 @@ type CreateUserParams struct {
 
 // kind: write
 // shard: tenant(tenant_id)
+// store: Users
 func (q *Queries) CreateUser(ctx context.Context, arg *CreateUserParams) (*User, error) {
 	row := q.db.QueryRow(ctx, createUser, arg.ID, arg.TenantID, arg.Name)
 	var i User
@@ -43,6 +44,7 @@ type GetAnalysisParams struct {
 
 // kind: read
 // shard: tenant(tenant_id)
+// store: Analyses
 func (q *Queries) GetAnalysis(ctx context.Context, arg *GetAnalysisParams) (*Analysis, error) {
 	row := q.db.QueryRow(ctx, getAnalysis, arg.TenantID, arg.ID)
 	var i Analysis
@@ -70,6 +72,7 @@ type GetUserParams struct {
 
 // kind: read
 // shard: tenant(tenant_id)
+// store: Users
 func (q *Queries) GetUser(ctx context.Context, arg *GetUserParams) (*User, error) {
 	row := q.db.QueryRow(ctx, getUser, arg.TenantID, arg.ID)
 	var i User
@@ -92,6 +95,7 @@ type UpdateUserNameParams struct {
 
 // kind: write
 // shard: tenant(tenant_id)
+// store: Users
 func (q *Queries) UpdateUserName(ctx context.Context, arg *UpdateUserNameParams) (*User, error) {
 	row := q.db.QueryRow(ctx, updateUserName, arg.TenantID, arg.ID, arg.Name)
 	var i User

@@ -183,6 +183,23 @@ type meshStore[SK any] struct {
 
 var _ Store = (*meshStore[uint8])(nil)
 
+type groupedMeshStore[SK any] struct {
+	store *meshStore[SK]
+}
+
+var _ Accounts = (*groupedMeshStore[uint8])(nil)
+var _ Reports = (*groupedMeshStore[uint8])(nil)
+
+// Accounts returns the Accounts query group.
+func (q *meshStore[SK]) Accounts() Accounts {
+	return &groupedMeshStore[SK]{store: q}
+}
+
+// Reports returns the Reports query group.
+func (q *meshStore[SK]) Reports() Reports {
+	return &groupedMeshStore[SK]{store: q}
+}
+
 func (c singletonTopology) buildStore(_ context.Context, options storeOptions) (Store, error) {
 	if c.err != nil {
 		return nil, c.err
@@ -228,18 +245,54 @@ func (c singletonTopology) buildStore(_ context.Context, options storeOptions) (
 	return &meshStore[uint8]{mesh: mesh}, nil
 }
 
-// GetAccount executes the generated query on its target shard.
-func (q *meshStore[SK]) GetAccount(ctx context.Context, arg *GetAccountParams, storeOptions ...QueryOption) (result *Account, err error) {
+// CountAccounts executes the generated query on its target shard.
+func (q *groupedMeshStore[SK]) CountAccounts(ctx context.Context, tenantID int64, storeOptions ...QueryOption) (result int64, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.mesh.StartSpan(ctx, "Store", "GetAccount", pgmesh.QueryKindRead)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "CountAccounts", pgmesh.QueryKindRead)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
 	var shardKey SK
-	if q.resolver != nil {
-		shardKey = q.resolver.Tenant(arg.TenantID)
+	if q.store.resolver != nil {
+		shardKey = q.store.resolver.Tenant(tenantID)
 	}
-	shard, err := q.mesh.Shard(shardKey)
+	shard, err := q.store.mesh.Shard(shardKey)
+	if err != nil {
+		return result, err
+	}
+
+	// Apply options that can override the default route.
+	options := applyQueryOptions(storeOptions...)
+
+	// Transactional reads must use their transaction.
+	if options.tx != nil {
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeTransaction, 0)
+		return shard.Write().WithTx(options.tx).CountAccounts(ctx, tenantID)
+	}
+
+	// Explicit primary reads bypass replicas.
+	if options.primary {
+		querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModePrimary, 0)
+		return shard.Write().CountAccounts(ctx, tenantID)
+	}
+
+	// Ordinary reads use the shard's replica route.
+	querySpan.SetRoute(shard.VShardIndex(), shard.Name(), pgmesh.RouteModeRead, 0)
+	return shard.Read().CountAccounts(ctx, tenantID)
+}
+
+// GetAccount executes the generated query on its target shard.
+func (q *groupedMeshStore[SK]) GetAccount(ctx context.Context, arg *GetAccountParams, storeOptions ...QueryOption) (result *Account, err error) {
+	// Trace the query and record its returned error.
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "GetAccount", pgmesh.QueryKindRead)
+	defer func() { querySpan.End(err) }()
+
+	// Resolve the shard key for this topology.
+	var shardKey SK
+	if q.store.resolver != nil {
+		shardKey = q.store.resolver.Tenant(arg.TenantID)
+	}
+	shard, err := q.store.mesh.Shard(shardKey)
 	if err != nil {
 		return result, err
 	}
@@ -265,17 +318,17 @@ func (q *meshStore[SK]) GetAccount(ctx context.Context, arg *GetAccountParams, s
 }
 
 // UpdateAccountName executes the generated query on its target shard.
-func (q *meshStore[SK]) UpdateAccountName(ctx context.Context, arg *UpdateAccountNameParams, storeOptions ...QueryOption) (result *Account, err error) {
+func (q *groupedMeshStore[SK]) UpdateAccountName(ctx context.Context, arg *UpdateAccountNameParams, storeOptions ...QueryOption) (result *Account, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.mesh.StartSpan(ctx, "Store", "UpdateAccountName", pgmesh.QueryKindWrite)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "UpdateAccountName", pgmesh.QueryKindWrite)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
 	var shardKey SK
-	if q.resolver != nil {
-		shardKey = q.resolver.Tenant(arg.TenantID)
+	if q.store.resolver != nil {
+		shardKey = q.store.resolver.Tenant(arg.TenantID)
 	}
-	shard, err := q.mesh.Shard(shardKey)
+	shard, err := q.store.mesh.Shard(shardKey)
 	if err != nil {
 		return result, err
 	}
@@ -299,17 +352,17 @@ func (q *meshStore[SK]) UpdateAccountName(ctx context.Context, arg *UpdateAccoun
 }
 
 // UpsertAccount executes the generated query on its target shard.
-func (q *meshStore[SK]) UpsertAccount(ctx context.Context, arg *UpsertAccountParams, storeOptions ...QueryOption) (result *Account, err error) {
+func (q *groupedMeshStore[SK]) UpsertAccount(ctx context.Context, arg *UpsertAccountParams, storeOptions ...QueryOption) (result *Account, err error) {
 	// Trace the query and record its returned error.
-	ctx, querySpan := q.mesh.StartSpan(ctx, "Store", "UpsertAccount", pgmesh.QueryKindWrite)
+	ctx, querySpan := q.store.mesh.StartSpan(ctx, "Store", "UpsertAccount", pgmesh.QueryKindWrite)
 	defer func() { querySpan.End(err) }()
 
 	// Resolve the shard key for this topology.
 	var shardKey SK
-	if q.resolver != nil {
-		shardKey = q.resolver.Tenant(arg.TenantID)
+	if q.store.resolver != nil {
+		shardKey = q.store.resolver.Tenant(arg.TenantID)
 	}
-	shard, err := q.mesh.Shard(shardKey)
+	shard, err := q.store.mesh.Shard(shardKey)
 	if err != nil {
 		return result, err
 	}
