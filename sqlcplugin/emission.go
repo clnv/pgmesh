@@ -24,6 +24,7 @@ func generateWrapper(
 	if err != nil {
 		return nil, err
 	}
+	groupFileNames := storeGroupOutputFileNames(opts.OutputFileName, groups)
 	aliases, err := collectSQLCTypeAliases(opts, queries, catalog)
 	if err != nil {
 		return nil, err
@@ -56,7 +57,7 @@ func generateWrapper(
 		imports.add(defaultErrorsPackage)
 	}
 
-	files := make([]*plugin.File, 0, 5)
+	files := make([]*plugin.File, 0, 5+len(groups))
 	appendFile := func(name string, writeBody func(*bytes.Buffer)) error {
 		content, generateErr := generateFile(opts, imports, writeBody)
 		if generateErr != nil {
@@ -93,6 +94,14 @@ func generateWrapper(
 	}); err != nil {
 		return nil, err
 	}
+	for index := range groups {
+		group := &groups[index]
+		if err := appendFile(groupFileNames[index], func(out *bytes.Buffer) {
+			writeStoreGroup(out, opts, group)
+		}); err != nil {
+			return nil, err
+		}
+	}
 	if err := appendFile(derivedOutputFileName(opts.OutputFileName, "sharded"), func(out *bytes.Buffer) {
 		if len(routes) > 0 {
 			writeShardedStore(out, opts)
@@ -127,6 +136,34 @@ func derivedOutputFileName(outputFileName, section string) string {
 	return stem + "_" + section + extension
 }
 
+func storeGroupOutputFileNames(outputFileName string, groups []storeGroup) []string {
+	fixedSections := []string{"interfaces", "read", "write", "sharded"}
+	used := map[string]struct{}{
+		strings.ToLower(outputFileName): {},
+	}
+	for _, section := range fixedSections {
+		name := derivedOutputFileName(outputFileName, section)
+		used[strings.ToLower(name)] = struct{}{}
+	}
+
+	names := make([]string, len(groups))
+	for index := range groups {
+		group := &groups[index]
+		section := snakeCaseIdentifier(group.name)
+		for {
+			name := derivedOutputFileName(outputFileName, section)
+			key := strings.ToLower(name)
+			if _, exists := used[key]; !exists {
+				used[key] = struct{}{}
+				names[index] = name
+				break
+			}
+			section = "group_" + section
+		}
+	}
+	return names
+}
+
 func usedImports(imports []importSpec, body string) []importSpec {
 	used := make([]importSpec, 0, len(imports))
 	for _, imp := range imports {
@@ -149,10 +186,6 @@ func writeQueryInterfaces(
 ) {
 	writeSplitInterface(out, defaultReadInterface, queries, queryKindRead)
 	writeSplitInterface(out, defaultWriteInterface, queries, queryKindWrite)
-	writeShardArgWrappers(out, opts, queries)
-	for _, group := range groups {
-		writeStoreGroupInterfaces(out, opts, &group)
-	}
 	fmt.Fprintf(out, "// %s is the topology-independent generated query API.\n", opts.StoreInterfaceName)
 	fmt.Fprintf(out, "type %s interface {\n", opts.StoreInterfaceName)
 	for _, group := range groups {
@@ -164,6 +197,33 @@ func writeQueryInterfaces(
 	fmt.Fprintf(out, "var _ %s = (*%s)(nil)\n", defaultReadInterface, defaultReadType)
 	fmt.Fprintf(out, "var _ %s = (*%s)(nil)\n", defaultWriteInterface, defaultWriteType)
 	fmt.Fprintf(out, "var _ %s = (*%s)(nil)\n\n", targetName(opts, "Querier"), defaultStoreType)
+}
+
+func writeStoreGroup(out *bytes.Buffer, opts *options, group *storeGroup) {
+	writeShardArgWrappers(out, opts, group.queries)
+	writeStoreGroupInterfaces(out, opts, group)
+
+	fmt.Fprintf(out, "var _ %s = (*%s[uint8])(nil)\n\n", group.name, defaultGroupType)
+	fmt.Fprintf(out, "// %s returns the %s query group.\n", group.name, group.name)
+	fmt.Fprintf(
+		out,
+		"func (%s *%s[SK]) %s() %s {\n",
+		defaultReceiverName,
+		defaultMeshStoreType,
+		group.name,
+		group.name,
+	)
+	fmt.Fprintf(
+		out,
+		"\treturn &%s[SK]{store: %s}\n",
+		defaultGroupType,
+		defaultReceiverName,
+	)
+	out.WriteString("}\n\n")
+
+	for index := range group.queries {
+		writeMeshStoreQueryMethod(out, opts, &group.queries[index])
+	}
 }
 
 func writeStoreGroupInterfaces(out *bytes.Buffer, opts *options, group *storeGroup) {
@@ -215,7 +275,7 @@ func writeShardArgWrappers(out *bytes.Buffer, opts *options, queries []generated
 		}
 		fmt.Fprintf(
 			out,
-			"// %s carries the sqlc argument and routing-only shard parameters for %s.\n",
+			"// %s combines sqlc and routing-only shard parameters for %s.\n",
 			query.shardArgs.name,
 			query.methodName,
 		)
@@ -224,7 +284,35 @@ func writeShardArgWrappers(out *bytes.Buffer, opts *options, queries []generated
 			fmt.Fprintf(out, "\t%s %s\n", field.name, exportedSQLCType(opts, field.typ))
 		}
 		out.WriteString("}\n\n")
+		writeSQLCArgReconstructor(out, opts, query.shardArgs)
 	}
+}
+
+func writeSQLCArgReconstructor(out *bytes.Buffer, opts *options, wrapper *shardArgWrapper) {
+	if wrapper.sqlcArg.isEmpty() {
+		return
+	}
+
+	receiverType := wrapper.name
+	if wrapper.sqlcArg.emitPointer {
+		receiverType = "*" + receiverType
+	}
+	fmt.Fprintf(
+		out,
+		"func (arg %s) sqlcParams() %s {\n",
+		receiverType,
+		wrapper.sqlcArg.defineType(opts),
+	)
+	out.WriteString("\treturn ")
+	if wrapper.sqlcArg.emitPointer {
+		out.WriteString("&")
+	}
+	fmt.Fprintf(out, "%s{\n", targetName(opts, wrapper.sqlcArg.structType.name))
+	for _, field := range wrapper.sqlcArg.structType.fields {
+		fmt.Fprintf(out, "\t\t%s: arg.%s,\n", field.name, field.name)
+	}
+	out.WriteString("\t}\n")
+	out.WriteString("}\n\n")
 }
 
 func writeReadQueries(out *bytes.Buffer, opts *options, queries []generatedQuery) {
@@ -543,28 +631,6 @@ func writeStoreConfiguration(
 		fmt.Fprintf(out, "type %s[SK any] struct {\n", defaultGroupType)
 		fmt.Fprintf(out, "\tstore *%s[SK]\n", defaultMeshStoreType)
 		out.WriteString("}\n\n")
-		for _, group := range groups {
-			fmt.Fprintf(out, "var _ %s = (*%s[uint8])(nil)\n", group.name, defaultGroupType)
-		}
-		out.WriteString("\n")
-		for _, group := range groups {
-			fmt.Fprintf(out, "// %s returns the %s query group.\n", group.name, group.name)
-			fmt.Fprintf(
-				out,
-				"func (%s *%s[SK]) %s() %s {\n",
-				defaultReceiverName,
-				defaultMeshStoreType,
-				group.name,
-				group.name,
-			)
-			fmt.Fprintf(
-				out,
-				"\treturn &%s[SK]{store: %s}\n",
-				defaultGroupType,
-				defaultReceiverName,
-			)
-			out.WriteString("}\n\n")
-		}
 	}
 
 	fmt.Fprintf(
@@ -609,10 +675,6 @@ func writeStoreConfiguration(
 		defaultMeshStoreType,
 	)
 	out.WriteString("}\n\n")
-
-	for index := range queries {
-		writeMeshStoreQueryMethod(out, opts, &queries[index])
-	}
 }
 
 func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generatedQuery) {

@@ -71,19 +71,20 @@ LIMIT @limit OFFSET @offset;
 
 Although `tenant_id` is not a SQL parameter here, it names a column on the
 generated `Account` table model. The generator uses that model's `TenantID`
-field name and Go type, then wraps the original sqlc argument instead of passing
-the routing-only value to SQL:
+field name and Go type, then combines it with the original sqlc parameter
+fields. Only the original fields are passed to SQL:
 
 ```go
 type ListTenantAccountsShardParams struct {
-    Arg      *ListTenantAccountsParams
+    Limit    int32
+    Offset   int32
     TenantID int64
 }
 
 accounts, err := queries.Accounts().ListTenantAccounts(
     ctx,
     &db.ListTenantAccountsShardParams{
-        Arg:      &db.ListTenantAccountsParams{Limit: 100},
+        Limit:    100,
         TenantID: tenantID,
     },
 )

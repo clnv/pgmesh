@@ -99,15 +99,20 @@ with `\`. `go_type` supports sqlc's string form and map form shown above.
 
 `zz_generated_store.go` produces:
 
-- `zz_generated_store_interfaces.go` for optional sqlc type aliases plus `Store`, query-group, and shard resolver contracts;
+- `zz_generated_store_interfaces.go` for optional sqlc type aliases plus the root `Store`, private executor, and shard resolver contracts;
 - `zz_generated_store_read.go` for the private read executor;
 - `zz_generated_store_write.go` for private primary and mirror execution;
-- `zz_generated_store.go` for query and store options, `Topology`, `Singleton`, `NewStore`, and routing;
+- `zz_generated_store.go` for query and store options, `Topology`, `Singleton`, `NewStore`, and shared routing machinery;
+- `zz_generated_store_<group>.go` for each `store:` annotation's sub-store interfaces, accessor, and routed query methods, with the group name converted to snake case;
 - `zz_generated_store_sharded.go` for sharded functional options and topology construction.
 
 The sharded file contains only its generated header and package clause when no
 query has shard metadata. This ensures regeneration removes obsolete routed
 code.
+
+sqlc does not remove process-plugin files that disappear from a generation
+response. After renaming or removing a `store:` group, remove its obsolete
+`zz_generated_store_<group>.go` file.
 
 The stable default public surface is:
 

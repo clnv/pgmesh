@@ -51,3 +51,20 @@ func TestPackageNameForImport(t *testing.T) {
 		})
 	}
 }
+
+func TestSnakeCaseIdentifier(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		want string
+	}{
+		{name: "Users", want: "users"},
+		{name: "QueryMessage", want: "query_message"},
+		{name: "IAM", want: "iam"},
+		{name: "OAuth2API", want: "o_auth2_api"},
+	}
+	for _, test := range tests {
+		assert.Equal(t, test.want, snakeCaseIdentifier(test.name))
+	}
+}

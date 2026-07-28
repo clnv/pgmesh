@@ -22,42 +22,6 @@ type writeQuerier interface {
 	UpsertAccount(ctx context.Context, arg *UpsertAccountParams) (*Account, error)
 }
 
-// AccountsReader exposes read queries in the Accounts store group.
-type AccountsReader interface {
-	// GetAccount executes the generated GetAccount query.
-	GetAccount(ctx context.Context, arg *GetAccountParams, storeOptions ...QueryOption) (*Account, error)
-}
-
-// AccountsWriter exposes write queries in the Accounts store group.
-type AccountsWriter interface {
-	// UpdateAccountName executes the generated UpdateAccountName query.
-	UpdateAccountName(ctx context.Context, arg *UpdateAccountNameParams, storeOptions ...QueryOption) (*Account, error)
-	// UpsertAccount executes the generated UpsertAccount query.
-	UpsertAccount(ctx context.Context, arg *UpsertAccountParams, storeOptions ...QueryOption) (*Account, error)
-}
-
-// Accounts exposes all queries in its generated store group.
-type Accounts interface {
-	AccountsReader
-	AccountsWriter
-}
-
-// ReportsReader exposes read queries in the Reports store group.
-type ReportsReader interface {
-	// CountAccounts executes the generated CountAccounts query.
-	CountAccounts(ctx context.Context, tenantID int64, storeOptions ...QueryOption) (int64, error)
-}
-
-// ReportsWriter exposes write queries in the Reports store group.
-type ReportsWriter interface {
-}
-
-// Reports exposes all queries in its generated store group.
-type Reports interface {
-	ReportsReader
-	ReportsWriter
-}
-
 // Store is the topology-independent generated query API.
 type Store interface {
 	// Accounts returns the Accounts query group.

@@ -97,6 +97,23 @@ func lowerTitle(s string) string {
 	return string(runes)
 }
 
+func snakeCaseIdentifier(name string) string {
+	runes := []rune(name)
+	var out strings.Builder
+	for index, current := range runes {
+		if index > 0 && unicode.IsUpper(current) {
+			previous := runes[index-1]
+			nextIsLower := index+1 < len(runes) && unicode.IsLower(runes[index+1])
+			if unicode.IsLower(previous) || unicode.IsDigit(previous) ||
+				unicode.IsUpper(previous) && nextIsLower {
+				out.WriteByte('_')
+			}
+		}
+		out.WriteRune(unicode.ToLower(current))
+	}
+	return out.String()
+}
+
 func escape(name string) string {
 	if goKeywords[name] {
 		return name + "_"
