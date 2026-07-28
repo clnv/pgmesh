@@ -95,6 +95,6 @@ with `_DSN`.
 
 Separate GitHub Actions workflows check formatting and module-file drift, build
 every package, run tests with the race detector and coverage, lint, scan known
-vulnerabilities, verify generated code, and execute the Docker-backed suite.
-Failed integration runs upload Docker logs, and test runs upload their coverage
-profile, for seven days.
+vulnerabilities, verify generated code, run the Docker-backed integration suite,
+and smoke-test the examples. Failed integration and example runs upload their
+Docker logs, and test runs upload their coverage profile, for seven days.
