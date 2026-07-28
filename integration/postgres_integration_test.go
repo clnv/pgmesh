@@ -4,10 +4,7 @@ package integration_test
 
 import (
 	"context"
-	"fmt"
 	"net/netip"
-	"os"
-	"strconv"
 	"testing"
 	"time"
 
@@ -19,9 +16,8 @@ import (
 
 	"github.com/clnv/pgmesh"
 	"github.com/clnv/pgmesh/integration/fixture"
+	"github.com/clnv/pgmesh/integration/internal/testdb"
 )
-
-const integrationEnv = "PGMESH_INTEGRATION"
 
 type tenantResolver struct{}
 
@@ -30,33 +26,26 @@ func (tenantResolver) Tenant(tenantID int64) uint64 {
 }
 
 type postgresHarness struct {
+	pools map[string]*pgxpool.Pool
+}
+
+type postgresCase struct {
+	*postgresHarness
 	queries fixture.Store
-	pools   map[string]*pgxpool.Pool
 }
 
 func newPostgresHarness(t *testing.T) *postgresHarness {
 	t.Helper()
-	if os.Getenv(integrationEnv) == "" {
-		t.Skipf("set %s=1 and start integration/docker-compose.yaml", integrationEnv)
+	if !testdb.Enabled() {
+		t.Skipf("set %s=1 and start integration/docker-compose.yaml", testdb.IntegrationEnv)
 	}
 
-	endpoints := []struct {
-		name        string
-		dsnEnv      string
-		portEnv     string
-		defaultPort int
-	}{
-		{name: "shard0-primary", dsnEnv: "PGMESH_SHARD0_PRIMARY_DSN", portEnv: "PGMESH_SHARD0_PRIMARY_PORT", defaultPort: 25432},
-		{name: "shard0-replica0", dsnEnv: "PGMESH_SHARD0_REPLICA0_DSN", portEnv: "PGMESH_SHARD0_REPLICA0_PORT", defaultPort: 25433},
-		{name: "shard0-replica1", dsnEnv: "PGMESH_SHARD0_REPLICA1_DSN", portEnv: "PGMESH_SHARD0_REPLICA1_PORT", defaultPort: 25434},
-		{name: "shard1-primary", dsnEnv: "PGMESH_SHARD1_PRIMARY_DSN", portEnv: "PGMESH_SHARD1_PRIMARY_PORT", defaultPort: 25435},
-		{name: "shard0-mirror", dsnEnv: "PGMESH_SHARD0_MIRROR_DSN", portEnv: "PGMESH_SHARD0_MIRROR_PORT", defaultPort: 25436},
-	}
+	endpoints := testdb.DefaultEndpoints()
 	dsns := make(map[string]string, len(endpoints))
 	for _, endpoint := range endpoints {
-		dsn, err := integrationDSN(os.Getenv(endpoint.dsnEnv), os.Getenv(endpoint.portEnv), endpoint.defaultPort)
-		require.NoError(t, err, "resolve DSN for %s", endpoint.name)
-		dsns[endpoint.name] = dsn
+		dsn, err := endpoint.DSN()
+		require.NoError(t, err, "resolve DSN for %s", endpoint.Name)
+		dsns[endpoint.Name] = dsn
 	}
 
 	pools := make(map[string]*pgxpool.Pool, len(dsns))
@@ -66,14 +55,16 @@ func newPostgresHarness(t *testing.T) *postgresHarness {
 		}
 	})
 	for name, dsn := range dsns {
-		pool, err := pgxpool.New(t.Context(), dsn)
-		require.NoError(t, err, "create pool for %s", name)
-		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-		err = pool.Ping(ctx)
-		cancel()
-		require.NoError(t, err, "ping %s", name)
+		pool, err := testdb.OpenPool(t.Context(), dsn)
+		require.NoError(t, err, "open pool for %s", name)
 		pools[name] = pool
 	}
+
+	return &postgresHarness{pools: pools}
+}
+
+func (h *postgresHarness) newShardedStore(t *testing.T) fixture.Store {
+	t.Helper()
 	queries, err := fixture.NewStore(
 		t.Context(),
 		fixture.Sharded(
@@ -82,79 +73,18 @@ func newPostgresHarness(t *testing.T) *postgresHarness {
 			tenantResolver{},
 			fixture.WithReplicaSet(
 				"shard0",
-				pools["shard0-primary"],
-				pools["shard0-replica0"],
-				pools["shard0-replica1"],
+				h.pools["shard0-primary"],
+				h.pools["shard0-replica0"],
+				h.pools["shard0-replica1"],
 			),
-			fixture.WithReplicaSet("shard1", pools["shard1-primary"]),
-			fixture.WithReplicaSet("shard0-mirror", pools["shard0-mirror"]),
+			fixture.WithReplicaSet("shard1", h.pools["shard1-primary"]),
+			fixture.WithReplicaSet("shard0-mirror", h.pools["shard0-mirror"]),
 			fixture.WithVShardMapping("shard0", []uint64{0}, "shard0-mirror"),
 			fixture.WithVShardMapping("shard1", []uint64{1}),
 		),
 	)
 	require.NoError(t, err)
-
-	return &postgresHarness{
-		queries: queries,
-		pools:   pools,
-	}
-}
-
-func integrationDSN(dsnOverride, portOverride string, defaultPort int) (string, error) {
-	if dsnOverride != "" {
-		return dsnOverride, nil
-	}
-	port := defaultPort
-	if portOverride != "" {
-		parsed, err := strconv.Atoi(portOverride)
-		if err != nil || parsed < 1 || parsed > 65535 {
-			return "", fmt.Errorf("port override must be a valid TCP port: %q", portOverride)
-		}
-		port = parsed
-	}
-	return fmt.Sprintf("postgres://pgmesh:pgmesh@127.0.0.1:%d/pgmesh?sslmode=disable", port), nil
-}
-
-func TestIntegrationDSN(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		dsn         string
-		port        string
-		defaultPort int
-		want        string
-		wantErr     string
-	}{
-		{
-			name:        "default port",
-			defaultPort: 25432,
-			want:        "postgres://pgmesh:pgmesh@127.0.0.1:25432/pgmesh?sslmode=disable",
-		},
-		{
-			name:        "port override",
-			port:        "35432",
-			defaultPort: 25432,
-			want:        "postgres://pgmesh:pgmesh@127.0.0.1:35432/pgmesh?sslmode=disable",
-		},
-		{name: "full DSN override", dsn: "postgres://custom", port: "invalid", defaultPort: 25432, want: "postgres://custom"},
-		{name: "invalid port", port: "invalid", defaultPort: 25432, wantErr: "valid TCP port"},
-		{name: "zero port", port: "0", defaultPort: 25432, wantErr: "valid TCP port"},
-		{name: "port too large", port: "65536", defaultPort: 25432, wantErr: "valid TCP port"},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := integrationDSN(test.dsn, test.port, test.defaultPort)
-			if test.wantErr != "" {
-				require.ErrorContains(t, err, test.wantErr)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, test.want, got)
-		})
-	}
+	return queries
 }
 
 func (h *postgresHarness) reset(t *testing.T) {
@@ -207,11 +137,11 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 
 	tests := []struct {
 		name string
-		run  func(*testing.T, *postgresHarness)
+		run  func(*testing.T, *postgresCase)
 	}{
 		{
 			name: "round robin replicas and primary fallback",
-			run: func(t *testing.T, h *postgresHarness) {
+			run: func(t *testing.T, h *postgresCase) {
 				h.insert(t, "shard0-primary", 100, 2, "primary")
 				h.insert(t, "shard0-replica0", 100, 2, "replica0")
 				h.insert(t, "shard0-replica1", 100, 2, "replica1")
@@ -237,8 +167,60 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 			},
 		},
 		{
+			name: "singleton routes replicas primary reads and mirrors",
+			run: func(t *testing.T, h *postgresCase) {
+				queries, err := fixture.NewStore(
+					t.Context(),
+					fixture.Singleton(
+						h.pools["shard0-primary"],
+						fixture.WithDatabaseName("singleton"),
+						fixture.WithReadReplicas(
+							h.pools["shard0-replica0"],
+							h.pools["shard0-replica1"],
+						),
+						fixture.WithWriteMirrors(h.pools["shard0-mirror"]),
+					),
+				)
+				require.NoError(t, err)
+
+				h.insert(t, "shard0-primary", 150, 2, "primary")
+				h.insert(t, "shard0-replica0", 150, 2, "replica0")
+				h.insert(t, "shard0-replica1", 150, 2, "replica1")
+
+				first, err := queries.Users().GetUser(
+					t.Context(),
+					&fixture.GetUserParams{TenantID: 2, ID: 150},
+				)
+				require.NoError(t, err)
+				second, err := queries.Users().GetUser(
+					t.Context(),
+					&fixture.GetUserParams{TenantID: 2, ID: 150},
+				)
+				require.NoError(t, err)
+				strong, err := queries.Users().GetUser(
+					t.Context(),
+					&fixture.GetUserParams{TenantID: 2, ID: 150},
+					fixture.ReadFromPrimary(),
+				)
+				require.NoError(t, err)
+				_, err = queries.Users().CreateUser(
+					t.Context(),
+					&fixture.CreateUserParams{ID: 151, TenantID: 2, Name: "mirrored"},
+				)
+				require.NoError(t, err)
+
+				assert.Equal(t, "replica0", first.Name)
+				assert.Equal(t, "replica1", second.Name)
+				assert.Equal(t, "primary", strong.Name)
+				assert.Equal(t, "mirrored", h.userName(t, "shard0-primary", 151, 2))
+				assert.Equal(t, "mirrored", h.userName(t, "shard0-mirror", 151, 2))
+				h.assertUserAbsent(t, "shard0-replica0", 151, 2)
+				h.assertUserAbsent(t, "shard0-replica1", 151, 2)
+			},
+		},
+		{
 			name: "writes route by virtual shard and mirror only shard zero",
-			run: func(t *testing.T, h *postgresHarness) {
+			run: func(t *testing.T, h *postgresCase) {
 				_, err := h.queries.Users().CreateUser(t.Context(), &fixture.CreateUserParams{ID: 200, TenantID: 2, Name: "even"})
 				require.NoError(t, err)
 				_, err = h.queries.Users().CreateUser(t.Context(), &fixture.CreateUserParams{ID: 201, TenantID: 3, Name: "odd"})
@@ -255,7 +237,7 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 		},
 		{
 			name: "mirror error preserves committed primary result",
-			run: func(t *testing.T, h *postgresHarness) {
+			run: func(t *testing.T, h *postgresCase) {
 				h.insert(t, "shard0-mirror", 300, 2, "existing")
 
 				user, err := h.queries.Users().CreateUser(
@@ -274,7 +256,7 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 		},
 		{
 			name: "missing mirror update row is ignored",
-			run: func(t *testing.T, h *postgresHarness) {
+			run: func(t *testing.T, h *postgresCase) {
 				h.insert(t, "shard0-primary", 350, 2, "before")
 
 				user, err := h.queries.Users().UpdateUserName(
@@ -291,7 +273,7 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 		},
 		{
 			name: "analysis scans nullable network and range types",
-			run: func(t *testing.T, h *postgresHarness) {
+			run: func(t *testing.T, h *postgresCase) {
 				_, err := h.pools["shard0-primary"].Exec(
 					t.Context(),
 					`INSERT INTO analyses (id, tenant_id, summary, state, source, active_window)
@@ -330,7 +312,7 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 		},
 		{
 			name: "transaction pins primary and disables mirror",
-			run: func(t *testing.T, h *postgresHarness) {
+			run: func(t *testing.T, h *postgresCase) {
 				tx, err := h.pools["shard0-primary"].Begin(t.Context())
 				require.NoError(t, err)
 				defer func() { _ = tx.Rollback(context.Background()) }()
@@ -360,7 +342,10 @@ func TestPostgresTopologyIntegration(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			harness.reset(t)
-			test.run(t, harness)
+			test.run(t, &postgresCase{
+				postgresHarness: harness,
+				queries:         harness.newShardedStore(t),
+			})
 		})
 	}
 }

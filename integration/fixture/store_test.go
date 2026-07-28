@@ -1,9 +1,13 @@
 package fixture
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 
@@ -11,6 +15,12 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/clnv/pgmesh"
 )
@@ -185,6 +195,122 @@ func TestGeneratedTopologyOptionsCloneInputs(t *testing.T) {
 	_, err = store.Users().CreateUser(t.Context(), &CreateUserParams{ID: 1, TenantID: 2, Name: "user"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"replica", "primary", "mirror"}, log.snapshot())
+}
+
+func TestGeneratedStoreTelemetryWiring(t *testing.T) {
+	t.Parallel()
+
+	recorder := tracetest.NewSpanRecorder()
+	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { require.NoError(t, tracerProvider.Shutdown(context.Background())) })
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	t.Cleanup(func() { require.NoError(t, meterProvider.Shutdown(context.Background())) })
+	var logOutput bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logOutput, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	callLog := &callLog{}
+	mirrorErr := errors.New("mirror unavailable")
+	store, err := NewStore(
+		t.Context(),
+		Sharded(
+			1,
+			pgmesh.ConstantShardHashFor[uint64](0),
+			tenantResolver{},
+			WithReplicaSet(
+				"main",
+				&fakeDB{name: "primary", log: callLog},
+				&fakeDB{name: "replica", log: callLog},
+			),
+			WithReplicaSet("mirror", &fakeDB{name: "mirror", log: callLog, rowErr: mirrorErr}),
+			WithVShardMapping("main", []uint64{0}, "mirror"),
+		),
+		WithTracerProvider(tracerProvider),
+		WithMeterProvider(meterProvider),
+		WithLogger(logger),
+	)
+	require.NoError(t, err)
+
+	_, err = store.Users().GetUser(t.Context(), &GetUserParams{TenantID: 1, ID: 2})
+	require.NoError(t, err)
+	_, err = store.Users().GetUser(
+		t.Context(),
+		&GetUserParams{TenantID: 1, ID: 2},
+		ReadFromPrimary(),
+	)
+	require.NoError(t, err)
+	tx := &fakeTx{fakeDB: &fakeDB{name: "tx", log: callLog}}
+	_, err = store.Users().GetUser(
+		t.Context(),
+		&GetUserParams{TenantID: 1, ID: 2},
+		WithTx(tx),
+	)
+	require.NoError(t, err)
+	user, err := store.Users().CreateUser(
+		t.Context(),
+		&CreateUserParams{ID: 1, TenantID: 2, Name: "user"},
+	)
+	require.ErrorIs(t, err, mirrorErr)
+	require.NotNil(t, user)
+
+	type spanExpectation struct {
+		query       string
+		kind        string
+		mode        string
+		mirrorCount int64
+		status      codes.Code
+	}
+	expectedSpans := []spanExpectation{
+		{query: "GetUser", kind: "read", mode: "read"},
+		{query: "GetUser", kind: "read", mode: "primary"},
+		{query: "GetUser", kind: "read", mode: "transaction"},
+		{query: "CreateUser", kind: "write", mode: "primary", mirrorCount: 1, status: codes.Error},
+	}
+	spans := recorder.Ended()
+	require.Len(t, spans, len(expectedSpans))
+	for index, expected := range expectedSpans {
+		attributes := telemetryAttributeMap(spans[index].Attributes())
+		assert.Equal(t, expected.query, attributes[pgmesh.AttributeQueryName].AsString())
+		assert.Equal(t, expected.kind, attributes[pgmesh.AttributeQueryKind].AsString())
+		assert.Equal(t, "main", attributes[pgmesh.AttributeReplicaSet].AsString())
+		assert.Equal(t, expected.mode, attributes[pgmesh.AttributeRouteMode].AsString())
+		assert.Equal(t, expected.mirrorCount, attributes[pgmesh.AttributeWriteMirrorCount].AsInt64())
+		assert.Equal(t, expected.status, spans[index].Status().Code)
+	}
+
+	var metrics metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(t.Context(), &metrics))
+	require.Len(t, metrics.ScopeMetrics, 1)
+	require.Len(t, metrics.ScopeMetrics[0].Metrics, 1)
+	histogram, ok := metrics.ScopeMetrics[0].Metrics[0].Data.(metricdata.Histogram[float64])
+	require.True(t, ok)
+	require.Len(t, histogram.DataPoints, len(expectedSpans))
+	var measurementCount uint64
+	for _, point := range histogram.DataPoints {
+		measurementCount += point.Count
+	}
+	assert.Equal(t, uint64(len(expectedSpans)), measurementCount)
+
+	logLines := strings.Split(strings.TrimSpace(logOutput.String()), "\n")
+	require.Len(t, logLines, len(expectedSpans))
+	for index, line := range logLines {
+		var record map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		assert.Equal(t, expectedSpans[index].query, record["query_name"])
+		assert.Equal(t, expectedSpans[index].mode, record["route_mode"])
+		mirrorCount, ok := record["write_mirror_count"].(float64)
+		require.True(t, ok)
+		assert.InDelta(t, expectedSpans[index].mirrorCount, mirrorCount, 0)
+		assert.Equal(t, expectedSpans[index].status == codes.Error, record["failed"])
+	}
+}
+
+func telemetryAttributeMap(items []attribute.KeyValue) map[attribute.Key]attribute.Value {
+	attributes := make(map[attribute.Key]attribute.Value, len(items))
+	for _, item := range items {
+		attributes[item.Key] = item.Value
+	}
+	return attributes
 }
 
 func TestGeneratedStoreBehavior(t *testing.T) {
