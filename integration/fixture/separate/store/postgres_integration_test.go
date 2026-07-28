@@ -4,39 +4,26 @@ package store_test
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"testing"
-	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	db "github.com/clnv/pgmesh/integration/fixture/separate/internal"
 	"github.com/clnv/pgmesh/integration/fixture/separate/store"
+	"github.com/clnv/pgmesh/integration/internal/testdb"
 )
 
 func TestSeparatePackageStoreAgainstPostgres(t *testing.T) {
-	if os.Getenv("PGMESH_INTEGRATION") == "" {
-		t.Skip("set PGMESH_INTEGRATION=1 and start integration/docker-compose.yaml")
+	if !testdb.Enabled() {
+		t.Skipf("set %s=1 and start integration/docker-compose.yaml", testdb.IntegrationEnv)
 	}
 
-	dsn := os.Getenv("PGMESH_SHARD0_PRIMARY_DSN")
-	if dsn == "" {
-		port := os.Getenv("PGMESH_SHARD0_PRIMARY_PORT")
-		if port == "" {
-			port = "25432"
-		}
-		dsn = fmt.Sprintf("postgres://pgmesh:pgmesh@127.0.0.1:%s/pgmesh?sslmode=disable", port)
-	}
-	pool, err := pgxpool.New(t.Context(), dsn)
+	dsn, err := testdb.PrimaryEndpoint().DSN()
+	require.NoError(t, err)
+	pool, err := testdb.OpenPool(t.Context(), dsn)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
-	pingContext, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	pingErr := pool.Ping(pingContext)
-	cancel()
-	require.NoError(t, pingErr)
 
 	tx, err := pool.Begin(t.Context())
 	require.NoError(t, err)

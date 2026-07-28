@@ -41,6 +41,31 @@ sql:
 
   - engine: "postgresql"
     schema: "schema.sql"
+    queries: "commands.sql"
+    gen:
+      go:
+        package: "internal"
+        out: "commands/internal"
+        sql_package: "pgx/v5"
+        emit_interface: true
+        query_parameter_limit: 1
+        emit_params_struct_pointers: true
+        emit_result_struct_pointers: true
+    codegen:
+      - plugin: "pgmesh"
+        out: "commands/store"
+        options:
+          package: "store"
+          output_file_name: "zz_generated_store.go"
+          internal_import_path: "github.com/clnv/pgmesh/integration/fixture/commands/internal"
+          internal_import_alias: "db"
+          sql_package: "pgx/v5"
+          query_parameter_limit: 1
+          emit_params_struct_pointers: true
+          emit_result_struct_pointers: true
+
+  - engine: "postgresql"
+    schema: "schema.sql"
     queries: "queries.sql"
     gen:
       go:
