@@ -196,7 +196,7 @@ func (q *meshStore[SK]) initializeGroups(options storeOptions) {
 	internalSettings := &groupedMeshStore[SK]{store: q}
 	q.groups.Settings = internalSettings
 	if createSettings := options.factories.Settings; createSettings != nil {
-		q.groups.Settings = createSettings(internalSettings)
+		q.groups.Settings = &telemetrySettingsStore[SK]{store: q, target: createSettings(internalSettings)}
 	}
 }
 

@@ -199,12 +199,12 @@ func (q *meshStore[SK]) initializeGroups(options storeOptions) {
 	internalAccounts := &groupedMeshStore[SK]{store: q}
 	q.groups.Accounts = internalAccounts
 	if createAccounts := options.factories.Accounts; createAccounts != nil {
-		q.groups.Accounts = createAccounts(internalAccounts)
+		q.groups.Accounts = &telemetryAccountsStore[SK]{store: q, target: createAccounts(internalAccounts)}
 	}
 	internalReports := &groupedMeshStore[SK]{store: q}
 	q.groups.Reports = internalReports
 	if createReports := options.factories.Reports; createReports != nil {
-		q.groups.Reports = createReports(internalReports)
+		q.groups.Reports = &telemetryReportsStore[SK]{store: q, target: createReports(internalReports)}
 	}
 }
 

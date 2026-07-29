@@ -56,14 +56,28 @@ store, err := db.NewStore(
 ```
 
 The factory runs once after the topology has built successfully, and repeated
-`store.Users()` calls return the same wrapper. Other query groups remain
-unwrapped unless their own factory option is supplied.
+`store.Users()` calls return the same retained query-group instance. Other
+query groups remain unwrapped unless their own factory option is supplied.
 
-Factories are synchronous and do not return errors. Generated code uses the
-returned interface as-is, so a factory must return a non-nil implementation.
+Factories are synchronous and do not return errors. Generated code delegates
+query methods to the returned interface without nil validation, so a factory
+must return a non-nil implementation. To record cache hits, the retained
+query-group instance is a generated telemetry facade; code must not depend on
+it having the same object identity as the interface returned by the factory.
 When the same group option appears more than once, the last value wins.
 `WithUsersFactory(nil)` therefore disables an earlier Users factory.
 
 The wrapper receives the normal generated interface rather than pgmesh's
 private routing implementation. Delegated calls retain replica, shard,
 transaction, mirror, telemetry, and logging behavior.
+
+The factory's `pgmesh.store.*` span and `pgmesh.store.duration` measurement
+include `pgmesh.store.internal_executed`. It is `false` when the wrapper returns
+without invoking the generated internal store and `true` when it delegates. A
+conventional cache-aside wrapper can therefore treat `false` as a cache hit.
+
+On a miss, the generated internal store creates a child `pgmesh.query.*` span
+and records `pgmesh.query.duration` with the resolved physical route. Debug
+logging follows the same split through `pgmesh store completed` and
+`pgmesh query completed` records. Pass the received context unchanged when
+delegating so pgmesh can link the two layers.

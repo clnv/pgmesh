@@ -235,6 +235,10 @@ func storeFactoryOptionName(group string) string {
 	return "With" + group + "Factory"
 }
 
+func storeTelemetryTypeName(group string) string {
+	return "telemetry" + group + "Store"
+}
+
 func sameRouteSignature(left, right shardRoute) bool {
 	if len(left.operands) != len(right.operands) {
 		return false

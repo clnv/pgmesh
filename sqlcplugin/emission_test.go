@@ -236,7 +236,16 @@ func TestGenerateGroupsPublicStoreQueries(t *testing.T) {
 	assert.Contains(t, got, "Accounts func(Accounts) Accounts")
 	assert.Contains(t, got, "System   func(System) System")
 	assert.Contains(t, got, "internalAccounts := &groupedMeshStore[SK]{store: q}")
-	assert.Contains(t, got, "q.groups.Accounts = createAccounts(internalAccounts)")
+	assert.Contains(
+		t,
+		got,
+		"q.groups.Accounts = &telemetryAccountsStore[SK]{store: q, target: createAccounts(internalAccounts)}",
+	)
+	assert.Contains(t, got, "type telemetryAccountsStore[SK any] struct")
+	telemetryBody := generatedMethodBody(t, got, "telemetryAccountsStore[SK]", "GetAccount")
+	assert.Contains(t, telemetryBody, `q.store.mesh.StartStoreSpan(ctx, "Accounts", "GetAccount"`)
+	assert.Contains(t, telemetryBody, "defer func() { storeSpan.End(err) }()")
+	assert.Contains(t, telemetryBody, "return q.target.GetAccount(ctx, storeOptions...)")
 	assert.Contains(t, got, "func (q *meshStore[SK]) Accounts() Accounts")
 	assert.Contains(t, got, "return q.groups.Accounts")
 	assert.Equal(t, 1, strings.Count(got, "store.initializeGroups(options)"))
@@ -247,6 +256,8 @@ func TestGenerateGroupsPublicStoreQueries(t *testing.T) {
 	)
 	groupedBody := generatedMethodBody(t, got, "groupedMeshStore[SK]", "GetAccount")
 	assert.Contains(t, groupedBody, "q.store.mesh.StartSpan")
+	assert.NotContains(t, groupedBody, "StartOrReuseSpan")
+	assert.NotContains(t, groupedBody, "SetInternalStoreExecuted")
 	assert.Contains(t, groupedBody, "q.store.mesh.Shard")
 	assert.NotContains(t, groupedBody, "q.mesh")
 	assert.Contains(t, got, "func (q *groupedMeshStore[SK]) Ping(")
@@ -2030,6 +2041,18 @@ func TestGenerateSupportsAllNodeLevelCommands(t *testing.T) {
 		body := generatedMethodBody(t, got, "readQueries", fmt.Sprintf("Query%d", index))
 		for _, want := range test.body {
 			assert.Contains(t, body, want, "command %s body", test.command)
+		}
+		telemetryBody := generatedMethodBody(
+			t,
+			got,
+			"telemetryCommandsStore[SK]",
+			fmt.Sprintf("Query%d", index),
+		)
+		assert.Contains(t, telemetryBody, "q.target.Query")
+		if strings.HasPrefix(test.command, ":batch") {
+			assert.NotContains(t, telemetryBody, "StartSpan")
+		} else {
+			assert.Contains(t, telemetryBody, "StartStoreSpan")
 		}
 	}
 }

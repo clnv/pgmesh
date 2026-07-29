@@ -201,17 +201,17 @@ func (q *meshStore[SK]) initializeGroups(options storeOptions) {
 	internalAnalyses := &groupedMeshStore[SK]{store: q}
 	q.groups.Analyses = internalAnalyses
 	if createAnalyses := options.factories.Analyses; createAnalyses != nil {
-		q.groups.Analyses = createAnalyses(internalAnalyses)
+		q.groups.Analyses = &telemetryAnalysesStore[SK]{store: q, target: createAnalyses(internalAnalyses)}
 	}
 	internalQueryMessage := &groupedMeshStore[SK]{store: q}
 	q.groups.QueryMessage = internalQueryMessage
 	if createQueryMessage := options.factories.QueryMessage; createQueryMessage != nil {
-		q.groups.QueryMessage = createQueryMessage(internalQueryMessage)
+		q.groups.QueryMessage = &telemetryQueryMessageStore[SK]{store: q, target: createQueryMessage(internalQueryMessage)}
 	}
 	internalUsers := &groupedMeshStore[SK]{store: q}
 	q.groups.Users = internalUsers
 	if createUsers := options.factories.Users; createUsers != nil {
-		q.groups.Users = createUsers(internalUsers)
+		q.groups.Users = &telemetryUsersStore[SK]{store: q, target: createUsers(internalUsers)}
 	}
 }
 

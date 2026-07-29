@@ -43,6 +43,23 @@ type Analyses interface {
 	AnalysesWriter
 }
 
+type telemetryAnalysesStore[SK any] struct {
+	store  *meshStore[SK]
+	target Analyses
+}
+
+func (q *telemetryAnalysesStore[SK]) GetAnalysis(ctx context.Context, arg *GetAnalysisT, storeOptions ...QueryOption) (result *Analysis, err error) {
+	ctx, storeSpan := q.store.mesh.StartStoreSpan(ctx, "Analyses", "GetAnalysis", pgmesh.QueryKindRead)
+	defer func() { storeSpan.End(err) }()
+	return q.target.GetAnalysis(ctx, arg, storeOptions...)
+}
+
+func (q *telemetryAnalysesStore[SK]) GetTenantUserAnalysis(ctx context.Context, arg *GetTenantUserAnalysisT, storeOptions ...QueryOption) (result *GetTenantUserAnalysisRow, err error) {
+	ctx, storeSpan := q.store.mesh.StartStoreSpan(ctx, "Analyses", "GetTenantUserAnalysis", pgmesh.QueryKindRead)
+	defer func() { storeSpan.End(err) }()
+	return q.target.GetTenantUserAnalysis(ctx, arg, storeOptions...)
+}
+
 // WithAnalysesFactory configures an optional wrapper for the Analyses query group.
 // A nil factory leaves the generated query group unwrapped.
 func WithAnalysesFactory(createAnalyses func(Analyses) Analyses) StoreOption {
@@ -50,6 +67,7 @@ func WithAnalysesFactory(createAnalyses func(Analyses) Analyses) StoreOption {
 }
 
 var _ Analyses = (*groupedMeshStore[uint8])(nil)
+var _ Analyses = (*telemetryAnalysesStore[uint8])(nil)
 
 // Analyses returns the Analyses query group.
 func (q *meshStore[SK]) Analyses() Analyses {

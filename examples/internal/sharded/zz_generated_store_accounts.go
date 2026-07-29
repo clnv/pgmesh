@@ -36,6 +36,29 @@ type Accounts interface {
 	AccountsWriter
 }
 
+type telemetryAccountsStore[SK any] struct {
+	store  *meshStore[SK]
+	target Accounts
+}
+
+func (q *telemetryAccountsStore[SK]) GetAccount(ctx context.Context, arg *GetAccountT, storeOptions ...QueryOption) (result *Account, err error) {
+	ctx, storeSpan := q.store.mesh.StartStoreSpan(ctx, "Accounts", "GetAccount", pgmesh.QueryKindRead)
+	defer func() { storeSpan.End(err) }()
+	return q.target.GetAccount(ctx, arg, storeOptions...)
+}
+
+func (q *telemetryAccountsStore[SK]) UpdateAccountName(ctx context.Context, arg *UpdateAccountNameT, storeOptions ...QueryOption) (result *Account, err error) {
+	ctx, storeSpan := q.store.mesh.StartStoreSpan(ctx, "Accounts", "UpdateAccountName", pgmesh.QueryKindWrite)
+	defer func() { storeSpan.End(err) }()
+	return q.target.UpdateAccountName(ctx, arg, storeOptions...)
+}
+
+func (q *telemetryAccountsStore[SK]) UpsertAccount(ctx context.Context, arg *UpsertAccountT, storeOptions ...QueryOption) (result *Account, err error) {
+	ctx, storeSpan := q.store.mesh.StartStoreSpan(ctx, "Accounts", "UpsertAccount", pgmesh.QueryKindWrite)
+	defer func() { storeSpan.End(err) }()
+	return q.target.UpsertAccount(ctx, arg, storeOptions...)
+}
+
 // WithAccountsFactory configures an optional wrapper for the Accounts query group.
 // A nil factory leaves the generated query group unwrapped.
 func WithAccountsFactory(createAccounts func(Accounts) Accounts) StoreOption {
@@ -43,6 +66,7 @@ func WithAccountsFactory(createAccounts func(Accounts) Accounts) StoreOption {
 }
 
 var _ Accounts = (*groupedMeshStore[uint8])(nil)
+var _ Accounts = (*telemetryAccountsStore[uint8])(nil)
 
 // Accounts returns the Accounts query group.
 func (q *meshStore[SK]) Accounts() Accounts {

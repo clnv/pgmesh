@@ -197,7 +197,7 @@ func (q *meshStore[SK]) initializeGroups(options storeOptions) {
 	internalCommands := &groupedMeshStore[SK]{store: q}
 	q.groups.Commands = internalCommands
 	if createCommands := options.factories.Commands; createCommands != nil {
-		q.groups.Commands = createCommands(internalCommands)
+		q.groups.Commands = &telemetryCommandsStore[SK]{store: q, target: createCommands(internalCommands)}
 	}
 }
 

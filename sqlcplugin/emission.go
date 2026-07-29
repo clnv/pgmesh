@@ -207,6 +207,7 @@ func writeStoreGroup(out *bytes.Buffer, opts *options, group *storeGroup) {
 	writeStoreParamAliases(out, group.queries)
 	writeShardArgWrappers(out, opts, group.queries)
 	writeStoreGroupInterfaces(out, opts, group)
+	writeStoreTelemetryWrapper(out, opts, group)
 
 	factoryName := storeFactoryOptionName(group.name)
 	fmt.Fprintf(out, "// %s configures an optional wrapper for the %s query group.\n", factoryName, group.name)
@@ -227,7 +228,8 @@ func writeStoreGroup(out *bytes.Buffer, opts *options, group *storeGroup) {
 	)
 	out.WriteString("}\n\n")
 
-	fmt.Fprintf(out, "var _ %s = (*%s[uint8])(nil)\n\n", group.name, defaultGroupType)
+	fmt.Fprintf(out, "var _ %s = (*%s[uint8])(nil)\n", group.name, defaultGroupType)
+	fmt.Fprintf(out, "var _ %s = (*%s[uint8])(nil)\n\n", group.name, storeTelemetryTypeName(group.name))
 	fmt.Fprintf(out, "// %s returns the %s query group.\n", group.name, group.name)
 	fmt.Fprintf(
 		out,
@@ -242,6 +244,61 @@ func writeStoreGroup(out *bytes.Buffer, opts *options, group *storeGroup) {
 
 	for index := range group.queries {
 		writeMeshStoreQueryMethod(out, opts, &group.queries[index])
+	}
+}
+
+func writeStoreTelemetryWrapper(out *bytes.Buffer, opts *options, group *storeGroup) {
+	wrapperType := storeTelemetryTypeName(group.name)
+	fmt.Fprintf(out, "type %s[SK any] struct {\n", wrapperType)
+	fmt.Fprintf(out, "\tstore *%s[SK]\n", defaultMeshStoreType)
+	fmt.Fprintf(out, "\ttarget %s\n", group.name)
+	out.WriteString("}\n\n")
+
+	for index := range group.queries {
+		query := &group.queries[index]
+		params := exportedSQLCArguments(opts, query.storeParams)
+		results := exportedSQLCTypes(opts, query.results)
+		traced := lastResultIsError(results)
+		resultSignature := resultsSignature(results)
+		var errName string
+		if traced {
+			resultSignature, _, errName = namedResultsSignature(
+				params,
+				results,
+				defaultReceiverName,
+				"storeOptions",
+			)
+		}
+
+		fmt.Fprintf(
+			out,
+			"func (%s *%s[SK]) %s(%s)%s {\n",
+			defaultReceiverName,
+			wrapperType,
+			query.methodName,
+			storeParamsSignature(params),
+			resultSignature,
+		)
+		if traced {
+			fmt.Fprintf(
+				out,
+				"\tctx, storeSpan := %s.store.mesh.StartStoreSpan(ctx, %q, %q, %s)\n",
+				defaultReceiverName,
+				query.store,
+				query.methodName,
+				queryKindConstant(query.kind),
+			)
+			fmt.Fprintf(out, "\tdefer func() { storeSpan.End(%s) }()\n", errName)
+		}
+		args := append(argumentNames(params), "storeOptions...")
+		fmt.Fprintf(
+			out,
+			"\treturn %s.target.%s(%s)\n",
+			defaultReceiverName,
+			query.methodName,
+			strings.Join(args, ", "),
+		)
+		out.WriteString("}\n\n")
 	}
 }
 
@@ -694,9 +751,11 @@ func writeStoreConfiguration(
 			fmt.Fprintf(out, "\tif create%s := options.factories.%s; create%s != nil {\n", group.name, group.name, group.name)
 			fmt.Fprintf(
 				out,
-				"\t\t%s.groups.%s = create%s(internal%s)\n",
+				"\t\t%s.groups.%s = &%s[SK]{store: %s, target: create%s(internal%s)}\n",
 				defaultReceiverName,
 				group.name,
+				storeTelemetryTypeName(group.name),
+				defaultReceiverName,
 				group.name,
 				group.name,
 			)
@@ -794,15 +853,8 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generate
 	)
 	if traced {
 		out.WriteString("\t// Trace the query and record its returned error.\n")
-		fmt.Fprintf(
-			out,
-			"\tctx, querySpan := %s.mesh.StartSpan(ctx, %q, %q, %s)\n",
-			store,
-			query.store,
-			query.methodName,
-			queryKindConstant(query.kind),
-		)
-		fmt.Fprintf(out, "\tdefer func() { querySpan.End(%s) }()\n\n", errName)
+		writeInternalQuerySpanStart(out, store, query, errName)
+		out.WriteString("\n")
 	}
 
 	out.WriteString("\t// Resolve the shard key for this topology.\n")
@@ -886,6 +938,23 @@ func writeMeshStoreQueryMethod(out *bytes.Buffer, opts *options, query *generate
 	out.WriteString("}\n\n")
 }
 
+func writeInternalQuerySpanStart(
+	out *bytes.Buffer,
+	store string,
+	query *generatedQuery,
+	errName string,
+) {
+	fmt.Fprintf(
+		out,
+		"\tctx, querySpan := %s.mesh.StartSpan(ctx, %q, %q, %s)\n",
+		store,
+		query.store,
+		query.methodName,
+		queryKindConstant(query.kind),
+	)
+	fmt.Fprintf(out, "\tdefer func() { querySpan.End(%s) }()\n", errName)
+}
+
 func writeGroupedManyQueryMethod(
 	out *bytes.Buffer,
 	opts *options,
@@ -919,15 +988,8 @@ func writeGroupedManyQueryMethod(
 		storeParamsSignature(query.storeParams),
 		resultSignature,
 	)
-	fmt.Fprintf(
-		out,
-		"\tctx, querySpan := %s.mesh.StartSpan(ctx, %q, %q, %s)\n",
-		store,
-		query.store,
-		query.methodName,
-		queryKindConstant(query.kind),
-	)
-	fmt.Fprintf(out, "\tdefer func() { querySpan.End(%s) }()\n\n", errName)
+	writeInternalQuerySpanStart(out, store, query, errName)
+	out.WriteString("\n")
 	out.WriteString("\toptions := applyQueryOptions(storeOptions...)\n")
 	out.WriteString("\ttype manyShardGroup struct {\n")
 	fmt.Fprintf(
@@ -1214,15 +1276,8 @@ func writeAllShardsQueryMethod(out *bytes.Buffer, query *generatedQuery) {
 		storeParamsSignature(query.storeParams),
 		resultSignature,
 	)
-	fmt.Fprintf(
-		out,
-		"\tctx, querySpan := %s.mesh.StartSpan(ctx, %q, %q, %s)\n",
-		store,
-		query.store,
-		query.methodName,
-		queryKindConstant(query.kind),
-	)
-	fmt.Fprintf(out, "\tdefer func() { querySpan.End(%s) }()\n\n", errName)
+	writeInternalQuerySpanStart(out, store, query, errName)
+	out.WriteString("\n")
 	out.WriteString("\toptions := applyQueryOptions(storeOptions...)\n")
 	fmt.Fprintf(out, "\tshards := %s.mesh.AllShards()\n", store)
 	out.WriteString("\tif options.tx != nil {\n")
@@ -1337,15 +1392,8 @@ func writeGroupedCopyQueryMethod(out *bytes.Buffer, query *generatedQuery) {
 		storeParamsSignature(query.storeParams),
 		resultSignature,
 	)
-	fmt.Fprintf(
-		out,
-		"\tctx, querySpan := %s.mesh.StartSpan(ctx, %q, %q, %s)\n",
-		store,
-		query.store,
-		query.methodName,
-		queryKindConstant(query.kind),
-	)
-	fmt.Fprintf(out, "\tdefer func() { querySpan.End(%s) }()\n\n", errName)
+	writeInternalQuerySpanStart(out, store, query, errName)
+	out.WriteString("\n")
 	out.WriteString("\toptions := applyQueryOptions(storeOptions...)\n")
 	out.WriteString("\ttype copyShardGroup struct {\n")
 	fmt.Fprintf(

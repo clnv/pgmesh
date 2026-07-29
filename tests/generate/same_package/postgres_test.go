@@ -5,6 +5,7 @@ package samepackage_test
 import (
 	"context"
 	"net/netip"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/sundayfun/pgmesh"
 	fixture "github.com/sundayfun/pgmesh/tests/generate/same_package"
@@ -214,8 +217,12 @@ func TestPostgresStoreFactoryIntegration(t *testing.T) {
 
 	factoryCalls := 0
 	var cachedUsers *cachedUsersStore
+	recorder := tracetest.NewSpanRecorder()
+	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { require.NoError(t, tracerProvider.Shutdown(context.Background())) })
 	queries := harness.newShardedStore(
 		t,
+		fixture.WithTracerProvider(tracerProvider),
 		fixture.WithUsersFactory(func(internalStore fixture.Users) fixture.Users {
 			factoryCalls++
 			cachedUsers = &cachedUsersStore{
@@ -227,8 +234,9 @@ func TestPostgresStoreFactoryIntegration(t *testing.T) {
 	)
 
 	require.Equal(t, 1, factoryCalls)
-	assert.Same(t, cachedUsers, queries.Users())
-	assert.Same(t, cachedUsers, queries.Users())
+	firstUsers := queries.Users()
+	assert.Same(t, firstUsers, queries.Users())
+	assert.NotSame(t, cachedUsers, firstUsers, "generated telemetry retains a stable facade")
 
 	arg := &fixture.GetUserParams{TenantID: 2, ID: 90}
 	first, err := queries.Users().GetUser(t.Context(), arg)
@@ -264,6 +272,49 @@ func TestPostgresStoreFactoryIntegration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "fresh", fresh.Name)
 	assert.Equal(t, 1, cachedUsers.cacheHits())
+
+	spans := recorder.Ended()
+	require.Len(t, spans, 9)
+	storeSpans := make([]sdktrace.ReadOnlySpan, 0, 5)
+	querySpans := make([]sdktrace.ReadOnlySpan, 0, 4)
+	for _, span := range spans {
+		switch {
+		case strings.HasPrefix(span.Name(), "pgmesh.store."):
+			storeSpans = append(storeSpans, span)
+		case strings.HasPrefix(span.Name(), "pgmesh.query."):
+			querySpans = append(querySpans, span)
+		default:
+			require.Failf(t, "unexpected span", "%s", span.Name())
+		}
+	}
+	require.Len(t, storeSpans, 5)
+	require.Len(t, querySpans, 4)
+
+	internalExecutions := make([]bool, 0, len(storeSpans))
+	storeSpanIDs := make(map[string]struct{}, len(storeSpans))
+	for _, span := range storeSpans {
+		storeSpanIDs[span.SpanContext().SpanID().String()] = struct{}{}
+		attributes := make(map[string]any, len(span.Attributes()))
+		for _, item := range span.Attributes() {
+			attributes[string(item.Key)] = item.Value.AsInterface()
+		}
+		executed, ok := attributes[pgmesh.AttributeInternalStoreExecuted].(bool)
+		require.True(t, ok)
+		internalExecutions = append(internalExecutions, executed)
+		if !executed {
+			assert.NotContains(t, attributes, pgmesh.AttributeReplicaSet)
+			assert.NotContains(t, attributes, pgmesh.AttributeRouteMode)
+		}
+	}
+	assert.Equal(t, []bool{true, true, true, false, true}, internalExecutions)
+	for _, span := range querySpans {
+		attributes := make(map[string]any, len(span.Attributes()))
+		for _, item := range span.Attributes() {
+			attributes[string(item.Key)] = item.Value.AsInterface()
+		}
+		assert.NotContains(t, attributes, pgmesh.AttributeInternalStoreExecuted)
+		assert.Contains(t, storeSpanIDs, span.Parent().SpanID().String())
+	}
 }
 
 func TestPostgresTopologyIntegration(t *testing.T) {

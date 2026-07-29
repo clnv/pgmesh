@@ -129,9 +129,11 @@ The stable default public surface is:
 Repeated topology options append in call order. Common scalar store options,
 such as `WithLogger` and `With<Group>Factory`, use the last supplied value.
 Group factories run once after successful topology construction, and a nil
-factory leaves that group unwrapped. Option constructors clone slice inputs,
-and `NewStore` reports nil topology, singleton, sharded, or store options as
-configuration errors.
+factory leaves that group unwrapped. A configured group is retained behind a
+generated telemetry facade that records `pgmesh.store.duration`, emits a
+`pgmesh.store.*` span, and reports `pgmesh.store.internal_executed`.
+Option constructors clone slice inputs, and `NewStore` reports nil topology,
+singleton, sharded, or store options as configuration errors.
 
 Internal sqlc integration is fixed to `Querier`, `Queries`, and `New`.
 Generated implementation names such as `queryStore`, `readQueries`,

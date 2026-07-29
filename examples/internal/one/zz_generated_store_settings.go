@@ -28,6 +28,23 @@ type Settings interface {
 	SettingsWriter
 }
 
+type telemetrySettingsStore[SK any] struct {
+	store  *meshStore[SK]
+	target Settings
+}
+
+func (q *telemetrySettingsStore[SK]) GetSetting(ctx context.Context, key string, storeOptions ...QueryOption) (result *ApplicationSetting, err error) {
+	ctx, storeSpan := q.store.mesh.StartStoreSpan(ctx, "Settings", "GetSetting", pgmesh.QueryKindRead)
+	defer func() { storeSpan.End(err) }()
+	return q.target.GetSetting(ctx, key, storeOptions...)
+}
+
+func (q *telemetrySettingsStore[SK]) UpsertSetting(ctx context.Context, arg *UpsertSettingT, storeOptions ...QueryOption) (result *ApplicationSetting, err error) {
+	ctx, storeSpan := q.store.mesh.StartStoreSpan(ctx, "Settings", "UpsertSetting", pgmesh.QueryKindWrite)
+	defer func() { storeSpan.End(err) }()
+	return q.target.UpsertSetting(ctx, arg, storeOptions...)
+}
+
 // WithSettingsFactory configures an optional wrapper for the Settings query group.
 // A nil factory leaves the generated query group unwrapped.
 func WithSettingsFactory(createSettings func(Settings) Settings) StoreOption {
@@ -35,6 +52,7 @@ func WithSettingsFactory(createSettings func(Settings) Settings) StoreOption {
 }
 
 var _ Settings = (*groupedMeshStore[uint8])(nil)
+var _ Settings = (*telemetrySettingsStore[uint8])(nil)
 
 // Settings returns the Settings query group.
 func (q *meshStore[SK]) Settings() Settings {
